@@ -476,11 +476,15 @@ window.__PDF_WORKER_SRC__ = "/**\n * @licstart The following is the entire licen
 </script>
 <script>
 /* =====================================================================
-   Offline EPUB Reader — single-file app (v2, neural voices in-browser)
+   Offline EPUB Reader — single-file app (v2.1, neural voices in-browser)
    Spec: Offline_EPUB_Reader_App_Requirements.md v3 FINAL
    v2 changes: Kokoro (English/Hindi) + MMS-TTS (Telugu) run in the
    browser via CDN-loaded ONNX/WASM — no device voice, no install dialog.
-   PDF worker is inlined; dictionary "search online" is a user-tapped link only.
+   v2.1 changes: read-aloud can no longer stall mid-chapter (prefetch queue,
+   per-sentence timeout, skip-on-failure, digits-only lines spoken as Telugu
+   time/numbers); fresh upload starts at Chapter 1 sentence 1; page totals
+   are cached per layout; time-left uses real audio length; PDF worker is
+   inlined; dictionary "search online" is a user-tapped link only.
    ===================================================================== */
 'use strict';
 
@@ -562,6 +566,8 @@ const state = {
   pages: [],             // horizontal mode pages: [{startPara, endPara}]
   currentPage: 0,
   totalPages: 0,
+  pageTotal: 0,          // v2.1: cached vertical-mode page total (see cachedPageTotal)
+  pageTotalKey: '',      // v2.1: layout key the cached total belongs to
   cacheCount: 0,
   preloadIdx: -1,
   preloadBusy: false,
@@ -634,8 +640,20 @@ const NEURAL = {
   audioEl: null,                           // single <audio> element for playback
   wordTimer: null,
   playToken: 0,                            // bump to cancel in-flight playback
+  prefetch: new Map(),                     // "chapter:sentence" -> {samples, sampleRate} | Promise
+  prefetchToken: 0,                        // bump to cancel in-flight prefetch
+  narrationToken: 0,                       // bump to invalidate a stale narration loop
+  consecFail: 0,                           // consecutive sentence synthesis failures
   status: '',                              // short status line for the UI
 };
+// v2.1: synthesis must never hang or kill playback. One synthesis call gets
+// at most SYNTH_TIMEOUT_MS; a sentence that still fails is SKIPPed (never a
+// full stop), and the next sentences are synthesized ahead while the current
+// one plays, so there are no long silences between utterances.
+const SYNTH_TIMEOUT_MS = 45000;
+const PREFETCH_AHEAD = 2;
+const MAX_CHUNK_CHARS = 180;
+const MAX_CONSEC_FAIL = 3;
 const KOKORO_MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX';
 const MMS_TEL_MODEL = 'ravivarmapatturi/vayyuedge-mms-tts-tel-onnx';
 const KOKORO_VOICES = {
@@ -663,6 +681,9 @@ function setNeuralStatus(msg) {
   const n = $('#kokoroNote');
   if (n) n.textContent = msg || defaultKokoroNote();
   updateVoicePanel();
+  // v2.1: surface the download state in the reader's audio bar too, so the
+  // first Play shows "Downloading voice…" instead of unexplained silence.
+  updateAudioBar();
 }
 function floatToWavBlob(samples, sampleRate) {
   // Encode Float32 PCM (-1..1) as 16-bit WAV.
@@ -738,37 +759,65 @@ function neuralEngineFor(lang) { return langCode(lang) === 'te' ? 'mms' : 'kokor
 async function ensureEngineFor(lang) {
   return neuralEngineFor(lang) === 'mms' ? ensureMMS() : ensureKokoro();
 }
-// Generate + play one sentence with the neural voice. Resolves when the audio
-// finishes (or immediately if cancelled). Drives the word-bounce highlight by
-// estimated timing (duration / word count), since neither engine returns
-// word timestamps.
-async function speakNeural(text, lang, opts) {
+// Synthesize text to raw PCM without playing it. Returns
+// {samples: Float32Array, sampleRate} (or {empty:true} when the line has
+// nothing speakable after sanitizing). Chunked and timed out, so one bad
+// line can never freeze playback. `cancelled` is polled between chunks.
+async function synthesizeNeural(text, lang, opts) {
   opts = opts || {};
-  const token = ++NEURAL.playToken;
   const engine = neuralEngineFor(lang);
   const voice = neuralVoiceFor(lang);
   const rate = opts.rate || 1;
-  let samples, sampleRate;
-  if (engine === 'mms') {
-    const tts = await ensureMMS();
-    if (token !== NEURAL.playToken) return false;
-    const out = await tts(text);
-    if (token !== NEURAL.playToken) return false;
-    samples = out.audio; sampleRate = out.sampling_rate || MMS_SAMPLE_RATE;
-  } else {
-    const tts = await ensureKokoro();
-    if (token !== NEURAL.playToken) return false;
-    const audio = await tts.generate(text, { voice, speed: rate });
-    if (token !== NEURAL.playToken) return false;
-    samples = audio.audio; sampleRate = audio.sampling_rate || KOKORO_SAMPLE_RATE;
+  const clean = sanitizeForSpeech(text, lang);
+  const emptyRate = engine === 'mms' ? MMS_SAMPLE_RATE : KOKORO_SAMPLE_RATE;
+  if (!hasSpeakable(clean)) return { samples: new Float32Array(0), sampleRate: emptyRate, empty: true };
+  const chunks = chunkForSpeech(clean);
+  let sampleRate = emptyRate;
+  const parts = [];
+  for (const chunk of chunks) {
+    if (opts.cancelled && opts.cancelled()) throw new Error('cancelled');
+    let samples;
+    if (engine === 'mms') {
+      let tts;
+      try { tts = await withTimeout(ensureMMS(), SYNTH_TIMEOUT_MS, 'load Telugu voice'); }
+      catch (e) { const err = new Error('Voice needs one download — connect to the internet once, then it works offline.'); err.voiceLoadFailed = true; throw err; }
+      if (opts.cancelled && opts.cancelled()) throw new Error('cancelled');
+      const res = await withTimeout(tts(chunk), SYNTH_TIMEOUT_MS, 'synthesize Telugu');
+      samples = res.audio; sampleRate = res.sampling_rate || MMS_SAMPLE_RATE;
+    } else {
+      let tts;
+      try { tts = await withTimeout(ensureKokoro(), SYNTH_TIMEOUT_MS, 'load Kokoro voice'); }
+      catch (e) { const err = new Error('Voice needs one download — connect to the internet once, then it works offline.'); err.voiceLoadFailed = true; throw err; }
+      if (opts.cancelled && opts.cancelled()) throw new Error('cancelled');
+      const audio = await withTimeout(tts.generate(chunk, { voice, speed: rate }), SYNTH_TIMEOUT_MS, 'synthesize Kokoro');
+      samples = audio.audio; sampleRate = audio.sampling_rate || KOKORO_SAMPLE_RATE;
+    }
+    parts.push(samples);
+    // brief silence between chunks so the join sounds like a natural pause
+    parts.push(new Float32Array(Math.floor(sampleRate * 0.12)));
+    if (opts.cancelled && opts.cancelled()) throw new Error('cancelled');
   }
-  if (token !== NEURAL.playToken) return false;
+  let total = 0;
+  parts.forEach(a => { total += a.length; });
+  const merged = new Float32Array(total);
+  let off = 0;
+  parts.forEach(a => { merged.set(a, off); off += a.length; });
+  return { samples: merged, sampleRate };
+}
+// Play already-synthesized PCM. Resolves true when the audio ends, false if
+// cancelled. Never hangs: a watchdog resolves it if 'ended' never fires.
+async function playAudioSamples(samples, sampleRate, lang, opts) {
+  opts = opts || {};
+  const token = ++NEURAL.playToken;
+  const engine = neuralEngineFor(lang);
+  const rate = opts.rate || 1;
   const blob = floatToWavBlob(samples, sampleRate);
   const url = URL.createObjectURL(blob);
   const a = neuralAudioEl();
   const duration = samples.length / sampleRate;
-  const words = String(text).split(/\s+/).filter(Boolean);
-  const perWord = words.length ? (duration / words.length) / (engine === 'mms' ? rate : 1) : duration;
+  const playDur = duration / (engine === 'mms' ? clamp(rate, 0.5, 2) : 1);
+  const words = String(opts.text || '').split(/\s+/).filter(Boolean);
+  const perWord = words.length ? playDur / words.length : playDur;
   // highlight words on a timer, paced to the (rate-adjusted) audio length
   clearTimeout(NEURAL.wordTimer);
   let wi = -1;
@@ -778,9 +827,7 @@ async function speakNeural(text, lang, opts) {
     const elapsed = (performance.now() - startAt) / 1000;
     const idx = Math.min(words.length - 1, Math.floor(elapsed / Math.max(0.05, perWord)));
     if (idx !== wi && idx >= 0) { wi = idx; markWordByIndex(idx); }
-    if (elapsed < duration / (engine === 'mms' ? rate : 1) + 0.2) {
-      NEURAL.wordTimer = setTimeout(tick, 60);
-    }
+    if (elapsed < playDur + 0.2) NEURAL.wordTimer = setTimeout(tick, 60);
   };
   NEURAL.wordTimer = setTimeout(tick, 30);
   try {
@@ -788,12 +835,26 @@ async function speakNeural(text, lang, opts) {
     a.src = url;
     await a.play();
   } catch (e) {
+    clearTimeout(NEURAL.wordTimer);
     URL.revokeObjectURL(url);
     return false;
   }
   const finished = await new Promise(res => {
-    const onEnd = () => { a.removeEventListener('ended', onEnd); a.removeEventListener('error', onErr); res(true); };
-    const onErr = () => { a.removeEventListener('ended', onEnd); a.removeEventListener('error', onErr); res(false); };
+    let done = false;
+    let watchdog = null;
+    const finish = v => {
+      if (done) return;
+      done = true;
+      clearTimeout(watchdog);
+      a.removeEventListener('ended', onEnd);
+      a.removeEventListener('error', onErr);
+      res(v);
+    };
+    const onEnd = () => finish(true);
+    const onErr = () => finish(false);
+    // watchdog: if 'ended' never fires (interrupted element, lost event),
+    // resolve anyway instead of hanging the narration forever.
+    watchdog = setTimeout(() => finish(true), Math.max(3000, (playDur + 8) * 1000));
     a.addEventListener('ended', onEnd);
     a.addEventListener('error', onErr);
   });
@@ -802,8 +863,55 @@ async function speakNeural(text, lang, opts) {
   if (token !== NEURAL.playToken) return false;
   return finished;
 }
+// One-off speech (selection "hear", tap-to-hear): synthesize then play.
+// Returns false when cancelled mid-way (caller must not auto-advance).
+async function speakNeural(text, lang, opts) {
+  opts = opts || {};
+  const tokenBefore = NEURAL.playToken;
+  const res = await synthesizeNeural(text, lang, opts);
+  if (res.empty) return true;
+  if (tokenBefore !== NEURAL.playToken) return false; // paused/stopped while synthesizing
+  return playAudioSamples(res.samples, res.sampleRate, lang, { rate: opts.rate || 1, text });
+}
+// Prefetch: synthesize upcoming sentences in the background while the
+// current one plays, so playback is continuous instead of speak-then-wait.
+// Results are cached per chapter+sentence; a single bad line is dropped from
+// the cache (the on-demand path skips it when its turn comes).
+function prefetchKey(chapter, idx) { return chapter + ':' + idx; }
+function cancelPrefetch() {
+  NEURAL.prefetchToken++;
+  NEURAL.prefetch.clear();
+}
+async function prefetchFrom(startIdx) {
+  const myToken = NEURAL.prefetchToken;
+  const chapter = state.currentChapter;
+  const lang = state.meta ? state.meta.language : 'en';
+  const rate = effectiveRate();
+  for (let k = 0; k < PREFETCH_AHEAD; k++) {
+    const idx = startIdx + k;
+    if (idx >= state.sentences.length) break;
+    if (myToken !== NEURAL.prefetchToken || chapter !== state.currentChapter || !state.playing) return;
+    const s = state.sentences[idx];
+    if (!s || s.image) continue;
+    const key = prefetchKey(chapter, idx);
+    if (NEURAL.prefetch.has(key)) continue;
+    const cancelled = () => myToken !== NEURAL.prefetchToken || chapter !== state.currentChapter;
+    try {
+      const p = synthesizeNeural(s.text, lang, { rate, cancelled });
+      NEURAL.prefetch.set(key, p);
+      const res = await p;
+      if (cancelled() || !state.playing) { NEURAL.prefetch.delete(key); return; }
+      NEURAL.prefetch.set(key, res);
+    } catch (e) {
+      NEURAL.prefetch.delete(key);
+    }
+    if (myToken !== NEURAL.prefetchToken || chapter !== state.currentChapter || !state.playing) return;
+  }
+}
 function stopNeural() {
   NEURAL.playToken++;
+  NEURAL.narrationToken++;   // invalidate any in-flight narration loop
+  cancelPrefetch();
   clearTimeout(NEURAL.wordTimer);
   const a = NEURAL.audioEl;
   if (a) { try { a.pause(); } catch (e) {} a.removeAttribute('src'); try { a.load(); } catch (e) {} }
@@ -921,6 +1029,69 @@ function prepForSpeech(text, lang) {
     s = s.replace(/\bDr\./g, 'Doctor').replace(/\bMr\./g, 'Mister').replace(/\bMrs\./g, 'Missus').replace(/\bSt\./g, 'Saint');
   }
   return s;
+}
+
+/* v2.1 — make a sentence safe for a neural voice before synthesis.
+   Root cause of the v2 stall (live test 2026-11-27): Chapter 1 sentence 87
+   is just `11:17."` — digits + punctuation, no speakable letters. MMS-TTS
+   cannot speak bare digits, and that one line made the pipeline fail, which
+   killed playback and made every re-press of Play fail on the same line.
+   Fix: expand bare times / numbers into spoken Telugu, strip stray quotes,
+   and skip lines that still have nothing speakable. */
+const TE_DIGITS = ['సున్నా', 'ఒకటి', 'రెండు', 'మూడు', 'నాలుగు', 'ఐదు', 'ఆరు', 'ఏడు', 'ఎనిమిది', 'తొమ్మిది'];
+const TE_TENS = { 10: 'పది', 11: 'పదకొండు', 12: 'పన్నెండు', 13: 'పదమూడు', 14: 'పద్నాలుగు', 15: 'పదిహేను', 16: 'పదహారు', 17: 'పదిహేడు', 18: 'పద్దెనిమిది', 19: 'పందొమ్మిది', 20: 'ఇరవై', 30: 'ముప్పై', 40: 'నలభై', 50: 'యాభై', 60: 'అరవై' };
+function teNumber(n) {
+  if (n < 10) return TE_DIGITS[n];
+  if (TE_TENS[n]) return TE_TENS[n];
+  const t = Math.floor(n / 10) * 10, o = n % 10;
+  return (TE_TENS[t] || String(t)) + (o ? ' ' + TE_DIGITS[o] : '');
+}
+function teTime(h, m) {
+  let out = teNumber(h) + ' గంటల';
+  if (m) out += ' ' + teNumber(m) + ' నిమిషాలు';
+  return out;
+}
+function sanitizeForSpeech(text, lang) {
+  let s = String(text || '');
+  if (langCode(lang) === 'te') {
+    s = s.replace(/\b(\d{1,2}):(\d{2})\b/g, (m, h, mn) => teTime(parseInt(h, 10), parseInt(mn, 10)));
+    s = s.replace(/\b\d+\b/g, m => { const n = parseInt(m, 10); return n <= 99 ? teNumber(n) : m; });
+  }
+  s = s.replace(/["'“”‘’]/g, ' ').replace(/\s+/g, ' ').trim();
+  return s;
+}
+function hasSpeakable(text) {
+  return /[\u0c00-\u0c7f\u0900-\u097fA-Za-z]/.test(String(text || ''));
+}
+// Split a long sentence into synthesis-sized chunks at clause boundaries,
+// so no single model call is huge or slow.
+function chunkForSpeech(text, maxLen) {
+  const max = maxLen || MAX_CHUNK_CHARS;
+  if (text.length <= max) return [text];
+  const parts = text.split(/(?<=[,;:—–])\s+|(?<=\s)(?=(?:మరియు|కానీ|అయినా|కాబట్టి)\s)/);
+  const chunks = [];
+  let cur = '';
+  const pushWordSplit = p => {
+    p.split(/\s+/).forEach(w => {
+      if ((cur + ' ' + w).trim().length <= max) cur = (cur + ' ' + w).trim();
+      else { if (cur) chunks.push(cur); cur = w; }
+    });
+  };
+  parts.forEach(p => {
+    if ((cur + ' ' + p).trim().length <= max) cur = (cur + ' ' + p).trim();
+    else {
+      if (cur) chunks.push(cur);
+      if (p.length <= max) cur = p;
+      else { cur = ''; pushWordSplit(p); }
+    }
+  });
+  if (cur) chunks.push(cur);
+  return chunks.length ? chunks : [text];
+}
+function withTimeout(promise, ms, label) {
+  let timer = null;
+  const timeout = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('Timed out: ' + label)), ms); });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 /* ---------------- chapter extraction from an epub.js section ---------------- */
@@ -1057,6 +1228,7 @@ async function loadChapterText(chIdx) {
 }
 async function loadChapter(chIdx, opts) {
   opts = opts || {};
+  cancelPrefetch();   // v2.1: stale prefetch belongs to the old chapter
   const rec = await loadChapterText(chIdx);
   if (!rec) return false;
   state.currentChapter = chIdx;
@@ -1192,8 +1364,15 @@ function renderChapter() {
     content.appendChild(node);
   });
   // word-level spans for the current chapter (built lazily per sentence on demand)
+  invalidatePageTotal();
   paginate();
   updatePageFooter();
+  // v2.1: measure the page total once layout settles (images/fonts), not on
+  // every scroll. Re-measure when images finish loading.
+  scheduleSettle();
+  content.querySelectorAll('img').forEach(img => {
+    if (!img.complete) img.addEventListener('load', scheduleSettle, { once: true });
+  });
   updateChapterList();
 }
 function paraElements() { return Array.from($('#pageContent').children).filter(n => n.dataset && n.dataset.para != null); }
@@ -1201,6 +1380,7 @@ function paginate() {
   const content = $('#pageContent');
   state.pages = [];
   state.totalPages = 0;
+  invalidatePageTotal();   // v2.1: horizontal totals are re-measured with the pages
   if (settings.direction !== 'horizontal') { state.totalPages = 1; return; }
   // measure: walk paragraph nodes, split into pages by height
   const area = $('#flipWrap');
@@ -1252,11 +1432,45 @@ function pageForSentence(si) {
   return 0;
 }
 function updatePageFooter() {
-  const total = settings.direction === 'horizontal' ? (state.totalPages || 1) : estimatePages();
+  const total = cachedPageTotal();
   const cur = settings.direction === 'horizontal' ? (state.currentPage + 1) : currentScrollPage();
   $('#pageNum').textContent = 'Page ' + cur + ' of ' + total;
   const ch = state.chapters[state.currentChapter];
   $('#chapterPos').textContent = ch ? ('Chapter ' + (state.currentChapter + 1) + ' of ' + state.chapters.length) : '';
+}
+// v2.1 — page totals must be STABLE while reading. v2 re-measured
+// scrollHeight/clientHeight on every scroll, so the total jumped (1 -> 11 -> 3)
+// as images loaded and layout shifted. Now the total is measured once per
+// chapter+layout and cached; it only changes when the layout really changes
+// (chapter, direction, window size, font) or after content settles.
+function pageTotalKey() {
+  return [state.currentChapter, settings.direction, window.innerWidth, window.innerHeight, settings.fontSize, settings.lineSpacing, settings.font].join('|');
+}
+function cachedPageTotal() {
+  if (!state.pageTotal || state.pageTotalKey !== pageTotalKey()) {
+    state.pageTotal = Math.max(1, settings.direction === 'horizontal' ? (state.totalPages || 1) : estimatePages());
+    state.pageTotalKey = pageTotalKey();
+  }
+  return state.pageTotal;
+}
+function invalidatePageTotal() { state.pageTotal = 0; state.pageTotalKey = ''; }
+let settleTimer = null;
+function scheduleSettle() {
+  clearTimeout(settleTimer);
+  settleTimer = setTimeout(settlePageTotal, 250);
+}
+function settlePageTotal() {
+  // Re-measure once layout settles (images/fonts), preserving the reader's
+  // scroll fraction so the view doesn't jump.
+  const content = $('#pageContent');
+  if (!content || !state.meta) return;
+  const frac = (content.scrollHeight > content.clientHeight) ? content.scrollTop / (content.scrollHeight - content.clientHeight) : 0;
+  invalidatePageTotal();
+  cachedPageTotal();
+  if (settings.direction === 'vertical' && content.scrollHeight > content.clientHeight) {
+    content.scrollTop = frac * (content.scrollHeight - content.clientHeight);
+  }
+  updatePageFooter();
 }
 function estimatePages() {
   const content = $('#pageContent');
@@ -1266,7 +1480,7 @@ function estimatePages() {
 function currentScrollPage() {
   const content = $('#pageContent');
   if (!content || !content.clientHeight) return 1;
-  const total = estimatePages();
+  const total = cachedPageTotal();
   // At the very end, show the last page (the last page is often partial,
   // so floor() alone would never reach it).
   if (content.scrollTop + content.clientHeight >= content.scrollHeight - 2) return total;
@@ -1363,8 +1577,10 @@ function pauseAfterSentence() {
   if (s && /\.\.\.|…/.test(s.text)) ms += 400;
   return ms;
 }
+function narrAlive(myNarr) { return state.playing && myNarr === NEURAL.narrationToken; }
 async function speakCurrent() {
   if (!state.playing) return;
+  const myNarr = NEURAL.narrationToken;
   const s = state.sentences[state.sentenceIndex];
   if (!s) { advanceChapterOrStop(); return; }
   if (s.image) { state.sentenceIndex++; setTimeout(() => speakCurrent(), 150); return; }
@@ -1373,24 +1589,82 @@ async function speakCurrent() {
   scrollToSentence();
   setMood(s.mood);
   updateAudioBar();
-  const started = Date.now();
+  const rate = effectiveRate();
+  // Kick off background synthesis of the next sentences so there is no
+  // long silence between utterances (v2 spoke, then waited ~25s per line).
+  prefetchFrom(state.sentenceIndex + 1);
+  // Use a prefetched result when ready, else synthesize on demand.
+  const key = prefetchKey(state.currentChapter, state.sentenceIndex);
+  let res = null;
+  try {
+    const cached = NEURAL.prefetch.get(key);
+    if (cached) {
+      try { res = await withTimeout(Promise.resolve(cached), SYNTH_TIMEOUT_MS, 'prefetched sentence'); }
+      finally { if (NEURAL.prefetch.get(key) === cached) NEURAL.prefetch.delete(key); }
+    } else {
+      res = await synthesizeNeural(s.text, lang, { rate, cancelled: () => !narrAlive(myNarr) });
+    }
+  } catch (err) {
+    // A voice that could not LOAD (no internet on first use, not cached yet)
+    // is a real blocker: say so plainly and stop — never fall back to a
+    // device voice. A single bad LINE, though, is just skipped (below).
+    if (!narrAlive(myNarr)) return;
+    if (err && err.voiceLoadFailed) {
+      console.warn('Neural voice failed to load:', err);
+      state.speaking = false;
+      stopNarration(true);
+      toast('Voice needs one download — connect to the internet once, then it works offline.');
+      return;
+    }
+    // One bad line must NOT kill the chapter: skip it and keep going.
+    // (v2 stopped the whole narration here and every re-press of Play
+    // retried the same failing line, so playback could never resume.)
+    console.warn('Skipping unspeakable sentence', state.sentenceIndex, err);
+    NEURAL.consecFail = (NEURAL.consecFail || 0) + 1;
+    if (NEURAL.consecFail >= MAX_CONSEC_FAIL) {
+      stopNarration(true);
+      toast('Voice stopped — the voice could not speak these lines. Try again.');
+      return;
+    }
+    clearSentenceSpans();
+    state.sentenceIndex++;
+    savePosition();
+    if (state.sentenceIndex >= state.sentences.length) { advanceChapterOrStop(); return; }
+    speakCurrent();
+    return;
+  }
+  NEURAL.consecFail = 0;
+  if (!narrAlive(myNarr)) return;
+  if (res.empty) {
+    // Nothing speakable in this line (e.g. a digits-only fragment) — skip it silently.
+    clearSentenceSpans();
+    state.sentenceIndex++;
+    savePosition();
+    if (state.sentenceIndex >= state.sentences.length) { advanceChapterOrStop(); return; }
+    speakCurrent();
+    return;
+  }
+  // Time-left estimate from REAL audio length, not wall-clock: wall-clock
+  // includes synthesis time, which made the estimate jump (1:32 -> 3:34).
+  const playDur = res.samples.length / res.sampleRate;
+  if (playDur > 0.3) state.avgSentenceSec = state.avgSentenceSec * 0.7 + playDur * 0.3;
+  updateAudioBar();
   state.speaking = true;
   let ok = false;
   try {
-    ok = await speakNeural(s.text, lang, { rate: effectiveRate() });
+    ok = await playAudioSamples(res.samples, res.sampleRate, lang, { rate, text: s.text });
   } catch (err) {
-    // Model could not load (usually no internet on first use, and the voice
-    // is not cached yet). Say so plainly — never fall back to a device voice.
-    console.error('Neural voice failed:', err);
     state.speaking = false;
-    stopNarration(true);
-    toast('Voice needs one download — connect to the internet once, then it works offline.');
+    if (!narrAlive(myNarr)) return;
+    clearSentenceSpans();
+    state.sentenceIndex++;
+    savePosition();
+    if (state.sentenceIndex >= state.sentences.length) { advanceChapterOrStop(); return; }
+    speakCurrent();
     return;
   }
   state.speaking = false;
-  const dur = (Date.now() - started) / 1000;
-  if (dur > 0.5) state.avgSentenceSec = state.avgSentenceSec * 0.8 + dur * 0.2;
-  if (!state.playing) return;
+  if (!narrAlive(myNarr)) return;
   if (!ok) { // cancelled mid-sentence (pause/stop/skip) — do not auto-advance
     return;
   }
@@ -1404,6 +1678,8 @@ async function speakCurrent() {
 function playNarration() {
   if (!state.meta || !state.sentences.length) return;
   if (state.playing) { pauseNarration(); return; }
+  NEURAL.narrationToken++;   // invalidate any stale narration loop
+  NEURAL.consecFail = 0;
   state.playing = true;
   $('#btnPlay').textContent = '⏸';
   $('#btnPlayBelow').textContent = '⏸ Pause';
@@ -1495,11 +1771,16 @@ function updateAudioBar() {
   updateHeader();
   const info = $('#abInfo');
   if (!info || !state.meta) return;
+  // v2.1: while a voice is downloading on first use, say so here instead of
+  // silence — the first Play takes ~30s before any sound on first use.
+  if (NEURAL.status) { info.textContent = NEURAL.status; return; }
   const ch = state.chapters[state.currentChapter];
   const total = state.sentences.length || 1;
   const pct = Math.round((state.sentenceIndex / total) * 100);
   $('#abProgressFill').style.width = pct + '%';
-  const remaining = Math.max(0, (total - state.sentenceIndex)) * state.avgSentenceSec;
+  // v2.1: estimate from real audio length (avgSentenceSec is now audio-only,
+  // not wall-clock incl. synthesis) and round to 5s so the display is stable.
+  const remaining = Math.max(0, Math.round(((total - state.sentenceIndex) * state.avgSentenceSec) / 5) * 5);
   info.textContent = (ch ? ch.title : '') + ' · ' + state.sentenceIndex + '/' + total + ' · ' + fmtTime(remaining) + ' left in chapter';
 }
 function timeRemainingBook() {
@@ -1760,14 +2041,14 @@ async function handleFile(file) {
     else meta = await openEpub(buf, name);
     // store the file bytes for reopening + offline use
     idbPut('books', { id: meta.id, type: isPdf ? 'pdf' : 'epub', data: buf, title: meta.title }).catch(() => {});
-    const pos = loadPosition();
-    if (pos && pos.chapter != null) {
-      await loadChapter(pos.chapter);
-      state.sentenceIndex = clamp(pos.sentence || 0, 0, Math.max(0, state.sentences.length - 1));
-      buildSentenceSpans(); scrollToSentence();
-    } else {
-      await loadChapter(nextNarratableChapter(0) || 0);
-    }
+    // v2.1: a fresh file upload ALWAYS starts at the beginning — never
+    // restore a stale position saved from an earlier session (v2 restored
+    // "Chapter 4 of 21" + sentence 78/101 for a book the user had just
+    // re-uploaded). Resume lives on the library "Continue listening" card,
+    // which uses reopenBook() and is the only path that restores a position.
+    try { localStorage.removeItem('epubreader.pos.' + meta.id); } catch (e) {}
+    try { localStorage.removeItem('epubreader.auto.' + meta.id); } catch (e) {}
+    await loadChapter(nextNarratableChapter(0) || 0);
     openReader();
     startPreload();
     updateAudioBar();
@@ -1829,6 +2110,7 @@ $('#selectionMenu') && $('#selectionMenu').addEventListener('click', ev => {
   if (act === 'copy') { navigator.clipboard && navigator.clipboard.writeText(selText).catch(() => {}); toast('Copied'); }
   if (act === 'hear') {
     const lang = state.meta ? state.meta.language : 'en';
+    pauseNarration();   // v2.1: never speak over the narration — it would stall the loop
     speakNeural(selText, lang, { rate: 1 }).catch(() => toast('Voice needs one download — connect to the internet once, then it works offline.'));
   }
   if (act === 'highlight') {
@@ -1995,7 +2277,7 @@ function wire() {
   $('#btnGotoPage').onclick = () => {
     const n = parseInt($('#gotoPageInput').value, 10);
     if (!n || n < 1) return;
-    const total = settings.direction === 'horizontal' ? (state.totalPages || 1) : estimatePages();
+    const total = cachedPageTotal();
     const page = clamp(n, 1, total);
     if (settings.direction === 'horizontal') showPage(page - 1);
     else {
@@ -2056,7 +2338,7 @@ function wire() {
     else if (dx > 50) showPage(state.currentPage - 1);
     touchX = null;
   }, { passive: true });
-  window.addEventListener('resize', () => { if (state.meta && settings.direction === 'horizontal') paginate(); });
+  window.addEventListener('resize', () => { if (state.meta && settings.direction === 'horizontal') paginate(); if (state.meta) scheduleSettle(); });
 }
 
 /* ---------------- init ---------------- */
@@ -2082,7 +2364,7 @@ function init() {
   window.__reader = {
     state, settings,
     openEpub, openPdf, handleFile, loadChapter, playNarration, pauseNarration,
-    version: '1.0.0'
+    version: '2.1.0'
   };
 }
 document.addEventListener('DOMContentLoaded', init);
