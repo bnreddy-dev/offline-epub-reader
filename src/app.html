@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f6efdd">
+<title>Offline EPUB Reader</title>
+<style>
+/*__CSS__*/
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ============ HOME SCREEN ============ -->
+  <section id="home" class="screen">
+    <header class="home-top">
+      <div>
+        <h1 class="app-title" data-i18n="appTitle">Offline EPUB Reader</h1>
+        <p class="app-sub" data-i18n="appSub">Read or listen to any book — fully offline, free, private.</p>
+      </div>
+      <button id="btnHomeSettings" class="icon-btn" aria-label="Settings">⚙</button>
+    </header>
+
+    <div class="home-actions">
+      <button id="btnOpenBook" class="primary-btn big" data-i18n="openBook">📖 Open a book</button>
+      <input type="file" id="fileInput" accept=".epub,.pdf,application/epub+zip,application/pdf" hidden>
+      <div class="home-hint" data-i18n="openHint">EPUB or PDF — the file never leaves your device.</div>
+    </div>
+
+    <div id="continueCard" class="continue-card hidden">
+      <div class="continue-info">
+        <div class="continue-label" data-i18n="continueListening">Continue listening</div>
+        <div id="continueTitle" class="continue-title"></div>
+        <div id="continuePos" class="continue-pos"></div>
+        <div id="continueRecap" class="continue-recap hidden"></div>
+      </div>
+      <button id="btnContinue" class="primary-btn" data-i18n="continue">▶ Continue</button>
+    </div>
+
+    <div class="lang-chips" id="langChips">
+      <button class="chip active" data-lang="all" data-i18n="all">All</button>
+      <button class="chip" data-lang="te">తెలుగు</button>
+      <button class="chip" data-lang="hi">हिन्दी</button>
+      <button class="chip" data-lang="en">English</button>
+    </div>
+
+    <h2 class="section-title" data-i18n="recentBooks">Recent books</h2>
+    <div id="recentList" class="recent-list">
+      <div class="empty-note" data-i18n="noBooksYet">No books yet. Open an EPUB or PDF to begin.</div>
+    </div>
+
+    <div class="home-tools">
+      <button id="btnBackup" class="tool-btn" data-i18n="backup">⬇ Backup library</button>
+      <button id="btnRestore" class="tool-btn" data-i18n="restore">⬆ Restore library</button>
+      <input type="file" id="restoreInput" accept=".json,application/json" hidden>
+      <button id="btnStorage" class="tool-btn" data-i18n="storage">🗄 Storage</button>
+      <button id="btnVoiceSetup" class="tool-btn" data-i18n="voices">🔊 Voices</button>
+    </div>
+    <div id="storagePanel" class="panel hidden"></div>
+  </section>
+
+  <!-- ============ READER SCREEN ============ -->
+  <section id="reader" class="screen hidden">
+    <header id="readerHeader" class="reader-header">
+      <button id="btnBack" class="icon-btn" aria-label="Back">←</button>
+      <div class="header-book">
+        <div id="hdrTitle" class="hdr-title">—</div>
+        <div id="hdrAuthor" class="hdr-author">—</div>
+      </div>
+      <button id="btnChapters" class="icon-btn" aria-label="Chapters">☰</button>
+      <button id="btnTheme" class="icon-btn" aria-label="Theme">◐</button>
+      <button id="btnFocus" class="icon-btn" aria-label="Focus mode">⛶</button>
+      <button id="btnBookmark" class="icon-btn" aria-label="Bookmark">🔖</button>
+      <button id="btnReaderSettings" class="icon-btn" aria-label="Settings">⚙</button>
+    </header>
+
+    <div id="moodStrip" class="mood-strip hidden">
+      <span data-i18n="nowMood">Now:</span> <b id="moodName">Neutral</b>
+      <span class="mood-dot" id="moodDot"></span>
+      <button id="btnMoodMenu" class="mini-btn" data-i18n="mood">Mood</button>
+    </div>
+
+    <div class="reader-body">
+      <aside id="drawer" class="drawer">
+        <div class="drawer-head">
+          <b data-i18n="chapters">Chapters</b>
+          <button id="btnDrawerClose" class="icon-btn">✕</button>
+        </div>
+        <div class="drawer-search">
+          <input id="searchInput" type="search" placeholder="Search in book…" data-i18n-ph="searchPh">
+          <div id="searchResults" class="search-results"></div>
+        </div>
+        <div class="drawer-goto">
+          <input id="gotoPageInput" type="number" min="1" placeholder="Page #" data-i18n-ph="gotoPagePh">
+          <button id="btnGotoPage" class="mini-btn" data-i18n="go">Go</button>
+        </div>
+        <ul id="chapterList" class="chapter-list"></ul>
+        <div class="drawer-section">
+          <b data-i18n="bookmarks">Bookmarks</b>
+          <ul id="bookmarkList" class="bookmark-list"></ul>
+        </div>
+        <div class="drawer-section">
+          <b data-i18n="highlights">Highlights</b>
+          <ul id="highlightList" class="highlight-list"></ul>
+        </div>
+        <div id="cacheInfo" class="cache-info"></div>
+      </aside>
+      <div id="drawerScrim" class="drawer-scrim hidden"></div>
+
+      <main id="pageArea" class="page-area">
+        <div id="flipWrap" class="flip-wrap">
+          <div id="pageCurrent" class="page">
+            <div id="pageContent" class="page-content"></div>
+          </div>
+        </div>
+        <div id="pageFooter" class="page-footer">
+          <span id="pageNum">Page — of —</span>
+          <span id="chapterPos"></span>
+        </div>
+      </main>
+    </div>
+
+    <div id="selectionMenu" class="selection-menu hidden">
+      <button data-act="define" data-i18n="define">Define</button>
+      <button data-act="hear" data-i18n="hear">🔊 Hear</button>
+      <button data-act="highlight" data-i18n="highlight">✎ Highlight</button>
+      <button data-act="copy" data-i18n="copy">Copy</button>
+    </div>
+    <div id="definePopup" class="define-popup hidden"></div>
+
+    <!-- Play button below the text (spec 15.2) -->
+    <button id="btnPlayBelow" class="play-below" data-i18n="playBelow">▶ Read aloud</button>
+
+    <footer id="audioBar" class="audio-bar">
+      <button id="btnPlay" class="play-btn" aria-label="Play or pause">▶</button>
+      <button id="btnPrev" class="abtn" aria-label="Previous sentence">⏮</button>
+      <button id="btnNext" class="abtn" aria-label="Next sentence">⏭</button>
+      <button id="btnBack15" class="abtn" aria-label="Back 15 seconds">−15s</button>
+      <button id="btnFwd15" class="abtn" aria-label="Forward 15 seconds">+15s</button>
+      <div class="ab-mid">
+        <div id="abProgress" class="ab-progress"><div id="abProgressFill"></div></div>
+        <div id="abInfo" class="ab-info">—</div>
+      </div>
+    </footer>
+  </section>
+
+  <!-- ============ SETTINGS SHEET ============ -->
+  <div id="settingsSheet" class="sheet hidden">
+    <div class="sheet-card">
+      <div class="sheet-head"><b data-i18n="settings">Settings</b><button id="btnSettingsClose" class="icon-btn">✕</button></div>
+      <label class="set-row"><span data-i18n="theme">Theme</span>
+        <select id="setTheme"><option value="book" data-i18n="themeBook">Book page</option><option value="white" data-i18n="themeWhite">White</option><option value="dark" data-i18n="themeDark">Dark</option></select>
+      </label>
+      <label class="set-row"><span data-i18n="direction">Page direction</span>
+        <select id="setDirection"><option value="vertical" data-i18n="dirVertical">Vertical scroll</option><option value="horizontal" data-i18n="dirHorizontal">Horizontal flip</option></select>
+      </label>
+      <label class="set-row"><span data-i18n="font">Font</span>
+        <select id="setFont"><option value="serif" data-i18n="fontSerif">Serif (book)</option><option value="sans" data-i18n="fontSans">Sans (clean)</option><option value="telugu" data-i18n="fontTelugu">Telugu</option></select>
+      </label>
+      <label class="set-row"><span data-i18n="fontSize">Font size</span>
+        <input id="setFontSize" type="range" min="1" max="5" step="1" value="3">
+      </label>
+      <label class="set-row"><span data-i18n="lineSpacing">Line spacing</span>
+        <input id="setLineSpacing" type="range" min="1" max="3" step="1" value="2">
+      </label>
+      <label class="set-row"><span data-i18n="uiLanguage">App language</span>
+        <select id="setUiLang"><option value="en">English</option><option value="te">తెలుగు</option><option value="hi">हिन्दी</option></select>
+      </label>
+      <label class="set-row"><span data-i18n="voice">Voice</span>
+        <select id="setVoice"><option value="" data-i18n="voiceAuto">Automatic</option></select>
+      </label>
+      <label class="set-row"><span data-i18n="speed">Reading speed</span>
+        <select id="speedSel" class="speed-sel" aria-label="Speed">
+          <option value="0.75">0.75×</option>
+          <option value="1" selected>1×</option>
+          <option value="1.25">1.25×</option>
+          <option value="1.5">1.5×</option>
+          <option value="2">2×</option>
+        </select>
+      </label>
+      <label class="set-row"><span data-i18n="genre">Genre</span>
+        <select id="setGenre">
+          <option value="thriller">Thriller / Mystery</option><option value="romance">Romance</option>
+          <option value="comedy">Comedy</option><option value="horror">Horror</option>
+          <option value="devotional">Devotional</option><option value="biography">Biography</option>
+          <option value="selfhelp">Self-help</option><option value="children">Children's story</option>
+        </select>
+      </label>
+      <label class="set-row"><span data-i18n="moodFollow">Follow mood</span>
+        <input id="setMoodFollow" type="checkbox" checked>
+      </label>
+      <label class="set-row"><span data-i18n="sleepDefault">Sleep timer default</span>
+        <select id="setSleepDefault"><option value="0" data-i18n="off">Off</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">60 min</option></select>
+      </label>
+      <div class="set-row"><span data-i18n="sleepTimer">Sleep timer</span><button id="btnSleep" class="mini-btn">⏱ Set timer</button></div>
+      <label class="set-row"><span data-i18n="largeText">Large text</span>
+        <input id="setLargeText" type="checkbox">
+      </label>
+      <label class="set-row"><span data-i18n="highContrast">High contrast</span>
+        <input id="setHighContrast" type="checkbox">
+      </label>
+      <div class="set-note" data-i18n="kokoroNote">Kokoro neural voice (English/Hindi) is not in this version — browser voice only, fully offline.</div>
+      <button id="btnExportHighlights" class="tool-btn" data-i18n="exportHighlights">Export highlights</button>
+    </div>
+  </div>
+
+  <!-- ============ VOICE SETUP SHEET ============ -->
+  <div id="voiceSheet" class="sheet hidden">
+    <div class="sheet-card">
+      <div class="sheet-head"><b data-i18n="voices">Voices</b><button id="btnVoiceClose" class="icon-btn">✕</button></div>
+      <div id="voicePanel"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <div id="sleepMenu" class="sleep-menu hidden">
+    <button data-min="0" data-i18n="off">Off</button>
+    <button data-min="15">15 min</button>
+    <button data-min="30">30 min</button>
+    <button data-min="60">60 min</button>
+  </div>
+  <div id="moodMenu" class="sleep-menu hidden"></div>
+</div>
+
+<script>
+/*__JSZIP__*/
+</script>
+<script>
+/*__EPUBJS__*/
+</script>
+<script>
+/*__PDFJS__*/
+</script>
+<script>
+window.__PDF_WORKER_SRC__ = "__PDFWORKER__";
+</script>
+<script>
+/*__APPJS__*/
+</script>
+</body>
+</html>
