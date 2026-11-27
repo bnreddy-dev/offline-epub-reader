@@ -15,9 +15,12 @@
   <!-- ============ HOME SCREEN ============ -->
   <section id="home" class="screen">
     <header class="home-top">
-      <div>
-        <h1 class="app-title" data-i18n="appTitle">Offline EPUB Reader</h1>
-        <p class="app-sub" data-i18n="appSub">Read or listen to any book — fully offline, free, private.</p>
+      <div class="app-mark">
+        <div class="app-logo" aria-hidden="true">📖</div>
+        <div>
+          <h1 class="app-title" data-i18n="appTitle">Offline EPUB Reader</h1>
+          <p class="app-sub" data-i18n="appSub">Read or listen to any book — fully offline, free, private.</p>
+        </div>
       </div>
       <button id="btnHomeSettings" class="icon-btn" aria-label="Settings">⚙</button>
     </header>
@@ -200,7 +203,7 @@
       <label class="set-row"><span data-i18n="highContrast">High contrast</span>
         <input id="setHighContrast" type="checkbox">
       </label>
-      <div class="set-note" data-i18n="kokoroNote">Kokoro neural voice (English/Hindi) is not in this version — browser voice only, fully offline.</div>
+      <div class="set-note" id="kokoroNote" data-i18n="kokoroNote">Neural voices in your browser — Kokoro (English/Hindi) + MMS Telugu. First use downloads each voice once, then it works offline.</div>
       <button id="btnExportHighlights" class="tool-btn" data-i18n="exportHighlights">Export highlights</button>
     </div>
   </div>

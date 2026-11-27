@@ -1,8 +1,9 @@
 /* =====================================================================
-   Offline EPUB Reader — single-file app (v1, browser voice only)
+   Offline EPUB Reader — single-file app (v2, neural voices in-browser)
    Spec: Offline_EPUB_Reader_App_Requirements.md v3 FINAL
-   No Kokoro in v1. No network calls except: PDF worker is inlined;
-   dictionary "search online" is a user-tapped link only.
+   v2 changes: Kokoro (English/Hindi) + MMS-TTS (Telugu) run in the
+   browser via CDN-loaded ONNX/WASM — no device voice, no install dialog.
+   PDF worker is inlined; dictionary "search online" is a user-tapped link only.
    ===================================================================== */
 'use strict';
 
@@ -19,9 +20,9 @@ function fmtDur(sec) { const h = Math.floor(sec / 3600), m = Math.round((sec % 3
 
 /* ---------------- i18n (app chrome: English / Telugu / Hindi) ---------------- */
 const I18N = {
-  en: { appTitle: 'Offline EPUB Reader', appSub: 'Read or listen to any book — fully offline, free, private.', openBook: '📖 Open a book', openHint: 'EPUB or PDF — the file never leaves your device.', continueListening: 'Continue listening', continue: '▶ Continue', all: 'All', recentBooks: 'Recent books', noBooksYet: 'No books yet. Open an EPUB or PDF to begin.', backup: '⬇ Backup library', restore: '⬆ Restore library', storage: '🗄 Storage', voices: '🔊 Voices', chapters: 'Chapters', bookmarks: 'Bookmarks', highlights: 'Highlights', searchPh: 'Search in book…', gotoPagePh: 'Page #', go: 'Go', playBelow: '▶ Read aloud', settings: 'Settings', theme: 'Theme', themeBook: 'Book page', themeWhite: 'White', themeDark: 'Dark', direction: 'Page direction', dirVertical: 'Vertical scroll', dirHorizontal: 'Horizontal flip', font: 'Font', fontSerif: 'Serif (book)', fontSans: 'Sans (clean)', fontTelugu: 'Telugu', fontSize: 'Font size', lineSpacing: 'Line spacing', uiLanguage: 'App language', voice: 'Voice', voiceAuto: 'Automatic', genre: 'Genre', moodFollow: 'Follow mood', sleepDefault: 'Sleep timer default', off: 'Off', largeText: 'Large text', highContrast: 'High contrast', kokoroNote: 'Kokoro neural voice (English/Hindi) is not in this version — browser voice only, fully offline.', exportHighlights: 'Export highlights', nowMood: 'Now:', mood: 'Mood', define: 'Define', hear: '🔊 Hear', highlight: '✎ Highlight', copy: 'Copy' },
-  te: { appTitle: 'ఆఫ్‌లైన్ EPUB రీడర్', appSub: 'ఏ పుస్తకాన్నైనా చదవండి లేదా వినండి — పూర్తిగా ఆఫ్‌లైన్, ఉచితం, ప్రైవేట్.', openBook: '📖 పుస్తకం తెరవండి', openHint: 'EPUB లేదా PDF — ఫైల్ మీ పరికరాన్ని వదలదు.', continueListening: 'వినడం కొనసాగించండి', continue: '▶ కొనసాగించు', all: 'అన్నీ', recentBooks: 'ఇటీవలి పుస్తకాలు', noBooksYet: 'ఇంకా పుస్తకాలు లేవు. ప్రారంభించడానికి EPUB లేదా PDF తెరవండి.', backup: '⬇ లైబ్రరీ బ్యాకప్', restore: '⬆ లైబ్రరీ పునరుద్ధరణ', storage: '🗄 నిల్వ', voices: '🔊 గొంతులు', chapters: 'అధ్యాయాలు', bookmarks: 'బుక్‌మార్కులు', highlights: 'హైలైట్లు', searchPh: 'పుస్తకంలో వెతకండి…', gotoPagePh: 'పేజీ #', go: 'వెళ్ళు', playBelow: '▶ బిగ్గరగా చదవండి', settings: 'సెట్టింగులు', theme: 'థీమ్', themeBook: 'పుస్తక పేజీ', themeWhite: 'తెలుపు', themeDark: 'చీకటి', direction: 'పేజీ దిశ', dirVertical: 'నిలువు స్క్రోల్', dirHorizontal: 'అడ్డంగా తిప్పండి', font: 'ఫాంట్', fontSerif: 'సెరిఫ్ (పుస్తకం)', fontSans: 'సాన్స్ (స్పష్టం)', fontTelugu: 'తెలుగు', fontSize: 'అక్షర పరిమాణం', lineSpacing: 'లైన్ అంతరం', uiLanguage: 'యాప్ భాష', voice: 'గొంతు', voiceAuto: 'ఆటోమేటిక్', genre: 'శైలి', moodFollow: 'మూడ్ అనుసరించు', sleepDefault: 'స్లీప్ టైమర్', off: 'ఆపివేయి', largeText: 'పెద్ద అక్షరాలు', highContrast: 'అధిక కాంట్రాస్ట్', kokoroNote: 'Kokoro న్యూరల్ వాయిస్ ఈ వెర్షన్‌లో లేదు — బ్రౌజర్ వాయిస్ మాత్రమే, పూర్తిగా ఆఫ్‌లైన్.', exportHighlights: 'హైలైట్లు ఎగుమతి', nowMood: 'ఇప్పుడు:', mood: 'మూడ్', define: 'అర్థం', hear: '🔊 వినండి', highlight: '✎ హైలైట్', copy: 'కాపీ' },
-  hi: { appTitle: 'ऑफ़लाइन EPUB रीडर', appSub: 'कोई भी किताब पढ़ें या सुनें — पूरी तरह ऑफ़लाइन, मुफ़्त, निजी।', openBook: '📖 किताब खोलें', openHint: 'EPUB या PDF — फ़ाइल आपके डिवाइस से बाहर नहीं जाती।', continueListening: 'सुनना जारी रखें', continue: '▶ जारी रखें', all: 'सभी', recentBooks: 'हाल की किताबें', noBooksYet: 'अभी कोई किताब नहीं। शुरू करने के लिए EPUB या PDF खोलें।', backup: '⬇ लाइब्रेरी बैकअप', restore: '⬆ लाइब्रेरी पुनर्स्थापित करें', storage: '🗄 भंडारण', voices: '🔊 आवाज़ें', chapters: 'अध्याय', bookmarks: 'बुकमार्क', highlights: 'हाइलाइट', searchPh: 'किताब में खोजें…', gotoPagePh: 'पृष्ठ #', go: 'जाएँ', playBelow: '▶ ज़ोर से पढ़ें', settings: 'सेटिंग्स', theme: 'थीम', themeBook: 'किताब का पन्ना', themeWhite: 'सफ़ेद', themeDark: 'अंधेरा', direction: 'पन्ने की दिशा', dirVertical: 'ऊर्ध्व स्क्रॉल', dirHorizontal: 'क्षैतिज पलटें', font: 'फ़ॉन्ट', fontSerif: 'सेरिफ़ (किताब)', fontSans: 'सैन्स (साफ़)', fontTelugu: 'तेलुगु', fontSize: 'अक्षर आकार', lineSpacing: 'पंक्ति अंतर', uiLanguage: 'ऐप भाषा', voice: 'आवाज़', voiceAuto: 'स्वचालित', genre: 'शैली', moodFollow: 'मूड का पालन करें', sleepDefault: 'स्लीप टाइमर', off: 'बंद', largeText: 'बड़े अक्षर', highContrast: 'उच्च कंट्रास्ट', kokoroNote: 'Kokoro न्यूरल आवाज़ इस संस्करण में नहीं है — केवल ब्राउज़र आवाज़, पूरी तरह ऑफ़लाइन।', exportHighlights: 'हाइलाइट निर्यात करें', nowMood: 'अभी:', mood: 'मूड', define: 'अर्थ', hear: '🔊 सुनें', highlight: '✎ हाइलाइट', copy: 'कॉपी' }
+  en: { appTitle: 'Offline EPUB Reader', appSub: 'Read or listen to any book — fully offline, free, private.', openBook: '📖 Open a book', openHint: 'EPUB or PDF — the file never leaves your device.', continueListening: 'Continue listening', continue: '▶ Continue', all: 'All', recentBooks: 'Recent books', noBooksYet: 'No books yet. Open an EPUB or PDF to begin.', backup: '⬇ Backup library', restore: '⬆ Restore library', storage: '🗄 Storage', voices: '🔊 Voices', chapters: 'Chapters', bookmarks: 'Bookmarks', highlights: 'Highlights', searchPh: 'Search in book…', gotoPagePh: 'Page #', go: 'Go', playBelow: '▶ Read aloud', settings: 'Settings', theme: 'Theme', themeBook: 'Book page', themeWhite: 'White', themeDark: 'Dark', direction: 'Page direction', dirVertical: 'Vertical scroll', dirHorizontal: 'Horizontal flip', font: 'Font', fontSerif: 'Serif (book)', fontSans: 'Sans (clean)', fontTelugu: 'Telugu', fontSize: 'Font size', lineSpacing: 'Line spacing', uiLanguage: 'App language', voice: 'Voice', voiceAuto: 'Automatic', genre: 'Genre', moodFollow: 'Follow mood', sleepDefault: 'Sleep timer default', off: 'Off', largeText: 'Large text', highContrast: 'High contrast', kokoroNote: 'Neural voices in your browser — Kokoro (English/Hindi) + MMS Telugu. First use downloads each voice once, then it works offline.', exportHighlights: 'Export highlights', nowMood: 'Now:', mood: 'Mood', define: 'Define', hear: '🔊 Hear', highlight: '✎ Highlight', copy: 'Copy' },
+  te: { appTitle: 'ఆఫ్‌లైన్ EPUB రీడర్', appSub: 'ఏ పుస్తకాన్నైనా చదవండి లేదా వినండి — పూర్తిగా ఆఫ్‌లైన్, ఉచితం, ప్రైవేట్.', openBook: '📖 పుస్తకం తెరవండి', openHint: 'EPUB లేదా PDF — ఫైల్ మీ పరికరాన్ని వదలదు.', continueListening: 'వినడం కొనసాగించండి', continue: '▶ కొనసాగించు', all: 'అన్నీ', recentBooks: 'ఇటీవలి పుస్తకాలు', noBooksYet: 'ఇంకా పుస్తకాలు లేవు. ప్రారంభించడానికి EPUB లేదా PDF తెరవండి.', backup: '⬇ లైబ్రరీ బ్యాకప్', restore: '⬆ లైబ్రరీ పునరుద్ధరణ', storage: '🗄 నిల్వ', voices: '🔊 గొంతులు', chapters: 'అధ్యాయాలు', bookmarks: 'బుక్‌మార్కులు', highlights: 'హైలైట్లు', searchPh: 'పుస్తకంలో వెతకండి…', gotoPagePh: 'పేజీ #', go: 'వెళ్ళు', playBelow: '▶ బిగ్గరగా చదవండి', settings: 'సెట్టింగులు', theme: 'థీమ్', themeBook: 'పుస్తక పేజీ', themeWhite: 'తెలుపు', themeDark: 'చీకటి', direction: 'పేజీ దిశ', dirVertical: 'నిలువు స్క్రోల్', dirHorizontal: 'అడ్డంగా తిప్పండి', font: 'ఫాంట్', fontSerif: 'సెరిఫ్ (పుస్తకం)', fontSans: 'సాన్స్ (స్పష్టం)', fontTelugu: 'తెలుగు', fontSize: 'అక్షర పరిమాణం', lineSpacing: 'లైన్ అంతరం', uiLanguage: 'యాప్ భాష', voice: 'గొంతు', voiceAuto: 'ఆటోమేటిక్', genre: 'శైలి', moodFollow: 'మూడ్ అనుసరించు', sleepDefault: 'స్లీప్ టైమర్', off: 'ఆపివేయి', largeText: 'పెద్ద అక్షరాలు', highContrast: 'అధిక కాంట్రాస్ట్', kokoroNote: 'బ్రౌజర్‌లో న్యూరల్ వాయిస్‌లు — Kokoro (ఇంగ్లీష్/హిందీ) + MMS తెలుగు. మొదటిసారి ఒకసారి డౌన్‌లోడ్ అవుతుంది, తర్వాత ఆఫ్‌లైన్‌లో పనిచేస్తుంది.', exportHighlights: 'హైలైట్లు ఎగుమతి', nowMood: 'ఇప్పుడు:', mood: 'మూడ్', define: 'అర్థం', hear: '🔊 వినండి', highlight: '✎ హైలైట్', copy: 'కాపీ' },
+  hi: { appTitle: 'ऑफ़लाइन EPUB रीडर', appSub: 'कोई भी किताब पढ़ें या सुनें — पूरी तरह ऑफ़लाइन, मुफ़्त, निजी।', openBook: '📖 किताब खोलें', openHint: 'EPUB या PDF — फ़ाइल आपके डिवाइस से बाहर नहीं जाती।', continueListening: 'सुनना जारी रखें', continue: '▶ जारी रखें', all: 'सभी', recentBooks: 'हाल की किताबें', noBooksYet: 'अभी कोई किताब नहीं। शुरू करने के लिए EPUB या PDF खोलें।', backup: '⬇ लाइब्रेरी बैकअप', restore: '⬆ लाइब्रेरी पुनर्स्थापित करें', storage: '🗄 भंडारण', voices: '🔊 आवाज़ें', chapters: 'अध्याय', bookmarks: 'बुकमार्क', highlights: 'हाइलाइट', searchPh: 'किताब में खोजें…', gotoPagePh: 'पृष्ठ #', go: 'जाएँ', playBelow: '▶ ज़ोर से पढ़ें', settings: 'सेटिंग्स', theme: 'थीम', themeBook: 'किताब का पन्ना', themeWhite: 'सफ़ेद', themeDark: 'अंधेरा', direction: 'पन्ने की दिशा', dirVertical: 'ऊर्ध्व स्क्रॉल', dirHorizontal: 'क्षैतिज पलटें', font: 'फ़ॉन्ट', fontSerif: 'सेरिफ़ (किताब)', fontSans: 'सैन्स (साफ़)', fontTelugu: 'तेलुगु', fontSize: 'अक्षर आकार', lineSpacing: 'पंक्ति अंतर', uiLanguage: 'ऐप भाषा', voice: 'आवाज़', voiceAuto: 'स्वचालित', genre: 'शैली', moodFollow: 'मूड का पालन करें', sleepDefault: 'स्लीप टाइमर', off: 'बंद', largeText: 'बड़े अक्षर', highContrast: 'उच्च कंट्रास्ट', kokoroNote: 'ब्राउज़र में न्यूरल आवाज़ें — Kokoro (English/Hindi) + MMS Telugu. पहली बार एक बार डाउनलोड होती है, फिर ऑफ़लाइन चलती है।', exportHighlights: 'हाइलाइट निर्यात करें', nowMood: 'अभी:', mood: 'मूड', define: 'अर्थ', hear: '🔊 सुनें', highlight: '✎ हाइलाइट', copy: 'कॉपी' }
 };
 function t(key) { const lang = settings.uiLang || 'en'; return (I18N[lang] && I18N[lang][key]) || I18N.en[key] || key; }
 function applyI18n() {
@@ -101,9 +102,7 @@ const state = {
   pdfPages: null,        // for PDF books: array of page texts
   searchIndex: [],       // [{chapter, text}]
 };
-let currentUtterance = null;
 let pauseTimer = null;
-let boundaryHandler = null;
 
 /* ---------------- moods & genres (spec §7) ---------------- */
 const MOODS = {
@@ -139,35 +138,252 @@ function setMood(name, announce) {
   if (announce) toast('Mood: ' + m.label);
 }
 
-/* ---------------- voices (browser SpeechSynthesis only in v1) ---------------- */
-function refreshVoices() {
-  try { state.voices = window.speechSynthesis ? speechSynthesis.getVoices() : []; } catch (e) { state.voices = []; }
-  const sel = $('#setVoice');
-  if (sel) {
-    const cur = sel.value;
-    sel.innerHTML = '<option value="">' + esc(t('voiceAuto')) + '</option>';
-    state.voices.forEach(v => {
-      const o = el('option', null, v.name + ' (' + (v.lang || '?') + ')');
-      o.value = v.name; sel.appendChild(o);
-    });
-    if (cur) sel.value = cur;
+/* ---------------- neural TTS engine (v2) — Kokoro en/hi + MMS te ---------------- */
+// ALL narration uses in-browser neural voices. No device speechSynthesis voice
+// is used anywhere in v2, and no "install a voice on your device" dialog exists.
+//  - English / Hindi: Kokoro-82M via kokoro-js (CDN, model cached after 1st download).
+//  - Telugu: MMS-TTS (facebook/mms-tts-tel) ONNX via @huggingface/transformers
+//    (CDN, model cached after 1st download). MMS is a single-speaker VITS voice:
+//    clear and intelligible, but flat/monotone — not as expressive as Kokoro.
+//    That quality limit is stated honestly in the UI and the release notes.
+// Models download once (needs internet that one time) and are then cached by the
+// libraries (Cache API / IndexedDB), so narration works offline afterwards.
+// If a model is not cached and there is no internet, narration shows a clear
+// message and does NOT fall back to a device voice.
+
+const NEURAL = {
+  kokoro: null, kokoroLoading: null,       // KokoroTTS instance / in-flight promise
+  mms: null, mmsLoading: null,             // transformers.js text-to-speech pipeline
+  audioEl: null,                           // single <audio> element for playback
+  wordTimer: null,
+  playToken: 0,                            // bump to cancel in-flight playback
+  status: '',                              // short status line for the UI
+};
+const KOKORO_MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX';
+const MMS_TEL_MODEL = 'ravivarmapatturi/vayyuedge-mms-tts-tel-onnx';
+const KOKORO_VOICES = {
+  en: ['af_bella', 'af_heart', 'af_sky', 'am_adam', 'am_michael'],
+  hi: ['hf_alpha', 'hf_beta', 'hm_omega', 'hm_psi'],
+};
+const MMS_SAMPLE_RATE = 16000;
+const KOKORO_SAMPLE_RATE = 24000;
+
+function neuralAudioEl() {
+  if (!NEURAL.audioEl) {
+    const a = document.createElement('audio');
+    a.preload = 'auto';
+    a.setAttribute('playsinline', '');
+    document.body.appendChild(a);
+    NEURAL.audioEl = a;
   }
+  return NEURAL.audioEl;
+}
+function defaultKokoroNote() {
+  return 'Neural voices in your browser — Kokoro (English/Hindi) + MMS Telugu. First use downloads each voice once, then it works offline.';
+}
+function setNeuralStatus(msg) {
+  NEURAL.status = msg || '';
+  const n = $('#kokoroNote');
+  if (n) n.textContent = msg || defaultKokoroNote();
   updateVoicePanel();
 }
-function langCode(lang) { return (lang || 'en').toLowerCase().slice(0, 2); }
-function pickVoice(lang) {
+function floatToWavBlob(samples, sampleRate) {
+  // Encode Float32 PCM (-1..1) as 16-bit WAV.
+  const n = samples.length;
+  const buf = new ArrayBuffer(44 + n * 2);
+  const v = new DataView(buf);
+  const wstr = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  wstr(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); wstr(8, 'WAVE');
+  wstr(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+  v.setUint16(22, 1, true); v.setUint32(24, sampleRate, true);
+  v.setUint32(28, sampleRate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  wstr(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i] || 0));
+    v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+async function ensureKokoro(progressCb) {
+  if (NEURAL.kokoro) return NEURAL.kokoro;
+  if (NEURAL.kokoroLoading) return NEURAL.kokoroLoading;
+  setNeuralStatus('Downloading Kokoro voice… (one-time, about 90 MB)');
+  NEURAL.kokoroLoading = (async () => {
+    const mod = await import('https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm');
+    const KokoroTTS = mod.KokoroTTS;
+    const device = (typeof navigator !== 'undefined' && navigator.gpu) ? 'webgpu' : 'wasm';
+    const tts = await KokoroTTS.from_pretrained(KOKORO_MODEL, {
+      dtype: 'q8',
+      device,
+      progress_callback: progressCb || null,
+    });
+    NEURAL.kokoro = tts;
+    setNeuralStatus('');
+    return tts;
+  })().catch(err => {
+    NEURAL.kokoroLoading = null;
+    setNeuralStatus('Kokoro voice could not load — connect to the internet once to download it.');
+    throw err;
+  });
+  return NEURAL.kokoroLoading;
+}
+async function ensureMMS(progressCb) {
+  if (NEURAL.mms) return NEURAL.mms;
+  if (NEURAL.mmsLoading) return NEURAL.mmsLoading;
+  setNeuralStatus('Downloading Telugu voice… (one-time, about 115 MB)');
+  NEURAL.mmsLoading = (async () => {
+    const mod = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.2/+esm');
+    const tts = await mod.pipeline('text-to-speech', MMS_TEL_MODEL, {
+      dtype: 'fp32',
+      device: 'wasm',
+      progress_callback: progressCb || null,
+    });
+    NEURAL.mms = tts;
+    setNeuralStatus('');
+    return tts;
+  })().catch(err => {
+    NEURAL.mmsLoading = null;
+    setNeuralStatus('Telugu voice could not load — connect to the internet once to download it.');
+    throw err;
+  });
+  return NEURAL.mmsLoading;
+}
+// Which neural voice id to use for a language (honours the user's manual pick).
+function neuralVoiceFor(lang) {
   const code = langCode(lang);
   const picked = settings.voicePick && settings.voicePick[code];
-  if (picked) { const v = state.voices.find(x => x.name === picked); if (v) return v; }
-  const pref = { te: ['te-IN', 'te'], hi: ['hi-IN', 'hi'], en: ['en-IN', 'en-US', 'en-GB', 'en'] }[code] || [code];
-  for (const p of pref) { const v = state.voices.find(x => (x.lang || '').toLowerCase().startsWith(p.toLowerCase())); if (v) return v; }
-  return state.voices.find(x => (x.lang || '').toLowerCase().startsWith(code)) || null;
+  if (picked) return picked;
+  if (code === 'hi') return 'hf_alpha';
+  if (code === 'te') return 'mms-tel';
+  return 'af_bella';
 }
-function voiceLangTag(lang) { return { te: 'te-IN', hi: 'hi-IN', en: 'en-IN' }[langCode(lang)] || lang; }
-function hasVoiceFor(lang) { return !!pickVoice(lang); }
-if (window.speechSynthesis) {
-  speechSynthesis.onvoiceschanged = refreshVoices;
-  refreshVoices();
+function neuralEngineFor(lang) { return langCode(lang) === 'te' ? 'mms' : 'kokoro'; }
+async function ensureEngineFor(lang) {
+  return neuralEngineFor(lang) === 'mms' ? ensureMMS() : ensureKokoro();
+}
+// Generate + play one sentence with the neural voice. Resolves when the audio
+// finishes (or immediately if cancelled). Drives the word-bounce highlight by
+// estimated timing (duration / word count), since neither engine returns
+// word timestamps.
+async function speakNeural(text, lang, opts) {
+  opts = opts || {};
+  const token = ++NEURAL.playToken;
+  const engine = neuralEngineFor(lang);
+  const voice = neuralVoiceFor(lang);
+  const rate = opts.rate || 1;
+  let samples, sampleRate;
+  if (engine === 'mms') {
+    const tts = await ensureMMS();
+    if (token !== NEURAL.playToken) return false;
+    const out = await tts(text);
+    if (token !== NEURAL.playToken) return false;
+    samples = out.audio; sampleRate = out.sampling_rate || MMS_SAMPLE_RATE;
+  } else {
+    const tts = await ensureKokoro();
+    if (token !== NEURAL.playToken) return false;
+    const audio = await tts.generate(text, { voice, speed: rate });
+    if (token !== NEURAL.playToken) return false;
+    samples = audio.audio; sampleRate = audio.sampling_rate || KOKORO_SAMPLE_RATE;
+  }
+  if (token !== NEURAL.playToken) return false;
+  const blob = floatToWavBlob(samples, sampleRate);
+  const url = URL.createObjectURL(blob);
+  const a = neuralAudioEl();
+  const duration = samples.length / sampleRate;
+  const words = String(text).split(/\s+/).filter(Boolean);
+  const perWord = words.length ? (duration / words.length) / (engine === 'mms' ? rate : 1) : duration;
+  // highlight words on a timer, paced to the (rate-adjusted) audio length
+  clearTimeout(NEURAL.wordTimer);
+  let wi = -1;
+  const startAt = performance.now();
+  const tick = () => {
+    if (token !== NEURAL.playToken) return;
+    const elapsed = (performance.now() - startAt) / 1000;
+    const idx = Math.min(words.length - 1, Math.floor(elapsed / Math.max(0.05, perWord)));
+    if (idx !== wi && idx >= 0) { wi = idx; markWordByIndex(idx); }
+    if (elapsed < duration / (engine === 'mms' ? rate : 1) + 0.2) {
+      NEURAL.wordTimer = setTimeout(tick, 60);
+    }
+  };
+  NEURAL.wordTimer = setTimeout(tick, 30);
+  try {
+    a.playbackRate = engine === 'mms' ? clamp(rate, 0.5, 2) : 1;
+    a.src = url;
+    await a.play();
+  } catch (e) {
+    URL.revokeObjectURL(url);
+    return false;
+  }
+  const finished = await new Promise(res => {
+    const onEnd = () => { a.removeEventListener('ended', onEnd); a.removeEventListener('error', onErr); res(true); };
+    const onErr = () => { a.removeEventListener('ended', onEnd); a.removeEventListener('error', onErr); res(false); };
+    a.addEventListener('ended', onEnd);
+    a.addEventListener('error', onErr);
+  });
+  clearTimeout(NEURAL.wordTimer);
+  URL.revokeObjectURL(url);
+  if (token !== NEURAL.playToken) return false;
+  return finished;
+}
+function stopNeural() {
+  NEURAL.playToken++;
+  clearTimeout(NEURAL.wordTimer);
+  const a = NEURAL.audioEl;
+  if (a) { try { a.pause(); } catch (e) {} a.removeAttribute('src'); try { a.load(); } catch (e) {} }
+}
+// Highlight the word at (0-based) index inside the currently speaking sentence.
+function markWordByIndex(idx) {
+  const s = state.sentences[state.sentenceIndex];
+  if (!s) return;
+  const node = paraElements().find(n => Number(n.dataset.para) === s.paraIdx);
+  if (!node) return;
+  const sent = node.querySelector('.sentence');
+  if (!sent) return;
+  const words = s.text.split(/(\s+)/);
+  let vis = -1, targetIdx = -1;
+  for (let i = 0; i < words.length; i++) {
+    if (/^\s+$/.test(words[i])) continue;
+    vis++;
+    if (vis === idx) { targetIdx = i; break; }
+  }
+  if (targetIdx < 0) return;
+  const wEls = sent.querySelectorAll('.w');
+  let vis2 = -1;
+  for (let i = 0; i < words.length; i++) {
+    if (/^\s+$/.test(words[i])) continue;
+    vis2++;
+    if (vis2 === idx) {
+      const target = wEls[vis2];
+      if (target && !target.classList.contains('on')) {
+        sent.querySelectorAll('.w.on').forEach(w => w.classList.remove('on'));
+        target.classList.add('on');
+        target.querySelectorAll('.l').forEach((lEl, li) => { lEl.style.animationDelay = (li * 45) + 'ms'; });
+      }
+      break;
+    }
+  }
+}
+
+function langCode(lang) { return (lang || 'en').toLowerCase().slice(0, 2); }
+// v2: every supported language has a neural voice (Kokoro en/hi, MMS te).
+function hasVoiceFor(lang) { return ['en', 'hi', 'te'].indexOf(langCode(lang)) >= 0; }
+// v2: the voice picker lists neural voices for the current book language.
+function refreshVoices() {
+  const sel = $('#setVoice');
+  if (!sel) { updateVoicePanel(); return; }
+  const lang = state.meta ? langCode(state.meta.language) : 'en';
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">' + esc(t('voiceAuto')) + '</option>';
+  const list = lang === 'te' ? ['mms-tel'] : (KOKORO_VOICES[lang] || KOKORO_VOICES.en);
+  list.forEach(id => {
+    const label = id === 'mms-tel' ? 'MMS Telugu (in-browser)' : id + ' (Kokoro)';
+    const o = el('option', null, label);
+    o.value = id; sel.appendChild(o);
+  });
+  const picked = settings.voicePick && settings.voicePick[lang];
+  if (picked) sel.value = picked;
+  else if (cur) sel.value = cur;
+  updateVoicePanel();
 }
 
 /* ---------------- language detection (spec §6.1) ---------------- */
@@ -378,6 +594,7 @@ async function loadChapter(chIdx, opts) {
   renderChapter();
   updateChapterList();
   updateCacheInfo();
+  updateAudioBar();   // v2 fix: bottom player must show the CURRENT chapter, not the old one
   savePosition();
   return true;
 }
@@ -572,7 +789,11 @@ function estimatePages() {
 function currentScrollPage() {
   const content = $('#pageContent');
   if (!content || !content.clientHeight) return 1;
-  return clamp(Math.floor(content.scrollTop / content.clientHeight) + 1, 1, estimatePages());
+  const total = estimatePages();
+  // At the very end, show the last page (the last page is often partial,
+  // so floor() alone would never reach it).
+  if (content.scrollTop + content.clientHeight >= content.scrollHeight - 2) return total;
+  return clamp(Math.floor(content.scrollTop / content.clientHeight) + 1, 1, total);
 }
 function updateChapterList() {
   const ul = $('#chapterList');
@@ -636,37 +857,6 @@ function clearSentenceSpans() {
     }
   });
 }
-function markWord(charIndex) {
-  const s = state.sentences[state.sentenceIndex];
-  if (!s) return;
-  const node = paraElements().find(n => Number(n.dataset.para) === s.paraIdx);
-  if (!node) return;
-  const sent = node.querySelector('.sentence');
-  if (!sent) return;
-  // charIndex is relative to the utterance text; map to word index
-  let acc = 0, wi = -1;
-  const words = s.text.split(/(\s+)/);
-  for (let i = 0; i < words.length; i++) {
-    if (/^\s+$/.test(words[i])) { acc += words[i].length; continue; }
-    if (charIndex >= acc && charIndex < acc + words[i].length) { wi = i; break; }
-    acc += words[i].length;
-  }
-  if (wi < 0) return;
-  const wEls = sent.querySelectorAll('.w');
-  let vis = -1;
-  for (let i = 0; i < words.length; i++) { if (!/^\s+$/.test(words[i])) { vis++; if (i === wi) break; } }
-  const target = wEls[vis];
-  if (!target || target.classList.contains('on')) return;
-  sent.querySelectorAll('.w.on').forEach(w => w.classList.remove('on'));
-  target.classList.add('on');
-  // staggered letter delays
-  target.querySelectorAll('.l').forEach((lEl, li) => { lEl.style.animationDelay = (li * 45) + 'ms'; });
-  // keep the speaking sentence visible
-  if (settings.direction === 'vertical') {
-    const r = sent.getBoundingClientRect(), c = $('#pageContent').getBoundingClientRect();
-    if (r.top < c.top + 60 || r.bottom > c.bottom - 120) sent.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }
-}
 function scrollToSentence() {
   const s = state.sentences[state.sentenceIndex];
   if (!s) return;
@@ -678,7 +868,7 @@ function scrollToSentence() {
   if (node && settings.direction === 'vertical') node.scrollIntoView({ block: 'center', behavior: 'smooth' });
 }
 
-/* ---------------- narration engine (browser voice only, spec §5) ---------------- */
+/* ---------------- narration engine (v2: neural voices, spec §5) ---------------- */
 function currentMoodRule() {
   const s = state.sentences[state.sentenceIndex];
   const moodName = s ? s.mood : state.mood;
@@ -688,10 +878,6 @@ function effectiveRate() {
   const genreBase = (GENRES[settings.genre] || GENRES.thriller).base;
   return clamp(state.speed * currentMoodRule().speed * genreBase, 0.4, 2.5);
 }
-function effectivePitch() {
-  const p = 1 + (currentMoodRule().pitch * 0.12);
-  return clamp(p, 0, 2);
-}
 function pauseAfterSentence() {
   const s = state.sentences[state.sentenceIndex];
   const rule = currentMoodRule();
@@ -700,64 +886,43 @@ function pauseAfterSentence() {
   if (s && /\.\.\.|…/.test(s.text)) ms += 400;
   return ms;
 }
-function pickVoiceForCurrent() {
-  const lang = state.meta ? state.meta.language : 'en';
-  const v = pickVoice(lang);
-  if (v) return v;
-  return null;
-}
-function speakCurrent() {
+async function speakCurrent() {
   if (!state.playing) return;
   const s = state.sentences[state.sentenceIndex];
   if (!s) { advanceChapterOrStop(); return; }
   if (s.image) { state.sentenceIndex++; setTimeout(() => speakCurrent(), 150); return; }
-  if (!window.speechSynthesis) { toast('Speech is not supported in this browser'); stopNarration(true); return; }
   const lang = state.meta ? state.meta.language : 'en';
-  const voice = pickVoiceForCurrent();
-  if (!voice) {
-    stopNarration(true);
-    showVoiceHelp(lang);
-    return;
-  }
-  const u = new SpeechSynthesisUtterance(s.text);
-  u.lang = voice.lang || voiceLangTag(lang);
-  u.voice = voice;
-  u.rate = effectiveRate();
-  u.pitch = effectivePitch();
-  u.volume = 1;
-  const started = Date.now();
-  state.speaking = true;
-  currentUtterance = u;
-  u.onboundary = e => {
-    if (e.name === 'word' && typeof e.charIndex === 'number') markWord(e.charIndex);
-  };
-  u.onend = () => {
-    state.speaking = false;
-    const dur = (Date.now() - started) / 1000;
-    if (dur > 0.5) state.avgSentenceSec = state.avgSentenceSec * 0.8 + dur * 0.2;
-    if (!state.playing) return;
-    const pause = pauseAfterSentence();
-    clearSentenceSpans();
-    state.sentenceIndex++;
-    savePosition();
-    if (state.sentenceIndex >= state.sentences.length) { advanceChapterOrStop(); return; }
-    pauseTimer = setTimeout(() => { buildSentenceSpans(); scrollToSentence(); speakCurrent(); }, pause);
-  };
-  u.onerror = ev => {
-    state.speaking = false;
-    if (ev && ev.error === 'canceled') return;
-    if (!state.playing) return;
-    // skip the failing sentence and continue
-    state.sentenceIndex++;
-    if (state.sentenceIndex < state.sentences.length) { buildSentenceSpans(); scrollToSentence(); setTimeout(speakCurrent, 200); }
-    else advanceChapterOrStop();
-  };
   buildSentenceSpans();
   scrollToSentence();
   setMood(s.mood);
-  speechSynthesis.speak(u);
-  state.lastSpokenAt = Date.now();
   updateAudioBar();
+  const started = Date.now();
+  state.speaking = true;
+  let ok = false;
+  try {
+    ok = await speakNeural(s.text, lang, { rate: effectiveRate() });
+  } catch (err) {
+    // Model could not load (usually no internet on first use, and the voice
+    // is not cached yet). Say so plainly — never fall back to a device voice.
+    console.error('Neural voice failed:', err);
+    state.speaking = false;
+    stopNarration(true);
+    toast('Voice needs one download — connect to the internet once, then it works offline.');
+    return;
+  }
+  state.speaking = false;
+  const dur = (Date.now() - started) / 1000;
+  if (dur > 0.5) state.avgSentenceSec = state.avgSentenceSec * 0.8 + dur * 0.2;
+  if (!state.playing) return;
+  if (!ok) { // cancelled mid-sentence (pause/stop/skip) — do not auto-advance
+    return;
+  }
+  const pause = pauseAfterSentence();
+  clearSentenceSpans();
+  state.sentenceIndex++;
+  savePosition();
+  if (state.sentenceIndex >= state.sentences.length) { advanceChapterOrStop(); return; }
+  pauseTimer = setTimeout(() => { buildSentenceSpans(); scrollToSentence(); speakCurrent(); }, pause);
 }
 function playNarration() {
   if (!state.meta || !state.sentences.length) return;
@@ -771,7 +936,7 @@ function playNarration() {
 function pauseNarration() {
   state.playing = false;
   clearTimeout(pauseTimer);
-  try { speechSynthesis.cancel(); } catch (e) {}
+  stopNeural();
   state.speaking = false;
   $('#btnPlay').textContent = '▶';
   $('#btnPlayBelow').textContent = '▶ Read aloud';
@@ -781,7 +946,7 @@ function pauseNarration() {
 function stopNarration(resetBtn) {
   state.playing = false;
   clearTimeout(pauseTimer);
-  try { speechSynthesis.cancel(); } catch (e) {}
+  stopNeural();
   state.speaking = false;
   clearSentenceSpans();
   if (resetBtn !== false) { $('#btnPlay').textContent = '▶'; $('#btnPlayBelow').textContent = '▶ Read aloud'; }
@@ -817,14 +982,14 @@ function skipSeconds(sec) {
   const dir = sec < 0 ? -1 : 1;
   state.sentenceIndex = clamp(state.sentenceIndex + dir * n, 0, Math.max(0, state.sentences.length - 1));
   clearSentenceSpans();
-  if (state.playing) { try { speechSynthesis.cancel(); } catch (e) {} state.speaking = false; clearTimeout(pauseTimer); buildSentenceSpans(); scrollToSentence(); speakCurrent(); }
+  if (state.playing) { stopNeural(); state.speaking = false; clearTimeout(pauseTimer); buildSentenceSpans(); scrollToSentence(); speakCurrent(); }
   else { buildSentenceSpans(); scrollToSentence(); }
   savePosition();
 }
 function nextSentence() {
   if (state.sentenceIndex < state.sentences.length - 1) {
     clearSentenceSpans(); state.sentenceIndex++;
-    if (state.playing) { try { speechSynthesis.cancel(); } catch (e) {} state.speaking = false; clearTimeout(pauseTimer); buildSentenceSpans(); scrollToSentence(); speakCurrent(); }
+    if (state.playing) { stopNeural(); state.speaking = false; clearTimeout(pauseTimer); buildSentenceSpans(); scrollToSentence(); speakCurrent(); }
     else { buildSentenceSpans(); scrollToSentence(); }
   } else advanceChapterOrStop();
   savePosition();
@@ -832,7 +997,7 @@ function nextSentence() {
 function prevSentence() {
   clearSentenceSpans();
   state.sentenceIndex = Math.max(0, state.sentenceIndex - 1);
-  if (state.playing) { try { speechSynthesis.cancel(); } catch (e) {} state.speaking = false; clearTimeout(pauseTimer); buildSentenceSpans(); scrollToSentence(); speakCurrent(); }
+  if (state.playing) { stopNeural(); state.speaking = false; clearTimeout(pauseTimer); buildSentenceSpans(); scrollToSentence(); speakCurrent(); }
   else { buildSentenceSpans(); scrollToSentence(); }
   savePosition();
 }
@@ -1129,7 +1294,8 @@ async function handleFile(file) {
     openReader();
     startPreload();
     updateAudioBar();
-    if (!hasVoiceFor(meta.language)) showVoiceHelp(meta.language);
+    // v2: voices are in-browser neural (Kokoro en/hi, MMS te) — no device
+    // voice check, no install dialog. The voice downloads once on first Play.
     if (isPdf) {
       toast('PDF converted — starting read-aloud');
       setTimeout(() => playFromStart(), 600);
@@ -1138,16 +1304,6 @@ async function handleFile(file) {
     console.error(e);
     toast('Could not open this file: ' + (e.message || e));
   }
-}
-function showVoiceHelp(lang) {
-  const names = { te: 'Telugu', hi: 'Hindi', en: 'English' };
-  const langName = names[langCode(lang)] || lang;
-  const panel = $('#voicePanel');
-  panel.innerHTML = '<h3>No ' + esc(langName) + ' voice on this device</h3>' +
-    '<p>Install a ' + esc(langName) + ' voice to hear this book:</p>' +
-    '<p><b>Android:</b> Settings → System → Languages → Text-to-speech → Google Text-to-Speech → Install voice data → ' + esc(langName) + '.</p>' +
-    '<p>You can still read the book without audio.</p>';
-  $('#voiceSheet').classList.remove('hidden');
 }
 
 /* ---------------- search in book ---------------- */
@@ -1196,9 +1352,7 @@ $('#selectionMenu') && $('#selectionMenu').addEventListener('click', ev => {
   if (act === 'copy') { navigator.clipboard && navigator.clipboard.writeText(selText).catch(() => {}); toast('Copied'); }
   if (act === 'hear') {
     const lang = state.meta ? state.meta.language : 'en';
-    const v = pickVoice(lang);
-    if (v && window.speechSynthesis) { const u = new SpeechSynthesisUtterance(selText); u.voice = v; u.lang = v.lang || voiceLangTag(lang); speechSynthesis.speak(u); }
-    else toast('No voice for this language');
+    speakNeural(selText, lang, { rate: 1 }).catch(() => toast('Voice needs one download — connect to the internet once, then it works offline.'));
   }
   if (act === 'highlight') {
     const note = prompt('Add a note (optional):', '') || '';
@@ -1230,7 +1384,7 @@ $('#pageContent').addEventListener('click', ev => {
   clearSentenceSpans();
   state.sentenceIndex = idx;
   if (!state.playing) playNarration();
-  else { try { speechSynthesis.cancel(); } catch (e) {} state.speaking = false; clearTimeout(pauseTimer); buildSentenceSpans(); scrollToSentence(); speakCurrent(); }
+  else { stopNeural(); state.speaking = false; clearTimeout(pauseTimer); buildSentenceSpans(); scrollToSentence(); speakCurrent(); }
 });
 
 /* ---------------- backup / restore / storage / voices ---------------- */
@@ -1287,14 +1441,13 @@ async function renderStoragePanel() {
 function updateVoicePanel() {
   const p = $('#voicePanel');
   if (!p) return;
-  const groups = {};
-  state.voices.forEach(v => { const l = langCode(v.lang || 'und'); (groups[l] = groups[l] || []).push(v.name + ' (' + (v.lang || '?') + ')'); });
-  let html = '<h3>Voices on this device</h3>';
-  ['te', 'hi', 'en'].forEach(l => {
-    html += '<p><b>' + l.toUpperCase() + ':</b> ' + ((groups[l] && groups[l].length) ? esc(groups[l].join(', ')) : '— none found') + '</p>';
-  });
-  if (!groups.te) html += '<p>Telugu voice missing? Android: Settings → Text-to-speech → Google Text-to-Speech → Install voice data → Telugu.</p>';
-  p.innerHTML = html;
+  const status = NEURAL.status ? '<p class="voice-status">' + esc(NEURAL.status) + '</p>' : '';
+  p.innerHTML = '<h3>Voices in this browser</h3>' +
+    '<p><b>English:</b> Kokoro — af_bella (natural, expressive)</p>' +
+    '<p><b>Hindi:</b> Kokoro — hf_alpha</p>' +
+    '<p><b>Telugu:</b> MMS-TTS (in-browser) — clear and intelligible, but flat/monotone; not as natural as Kokoro. No device voice or install is needed.</p>' +
+    '<p>Each voice downloads once on first use, then works offline. Nothing is installed on your device.</p>' +
+    status;
 }
 
 /* ---------------- mood menu ---------------- */
@@ -1365,9 +1518,24 @@ function wire() {
   $('#btnGotoPage').onclick = () => {
     const n = parseInt($('#gotoPageInput').value, 10);
     if (!n || n < 1) return;
-    if (settings.direction === 'horizontal') showPage(n - 1);
-    else { const c = $('#pageContent'); c.scrollTop = (n - 1) * c.clientHeight; }
+    const total = settings.direction === 'horizontal' ? (state.totalPages || 1) : estimatePages();
+    const page = clamp(n, 1, total);
+    if (settings.direction === 'horizontal') showPage(page - 1);
+    else {
+      const c = $('#pageContent');
+      const maxTop = Math.max(0, c.scrollHeight - c.clientHeight);
+      c.scrollTo({ top: Math.min((page - 1) * c.clientHeight, maxTop), behavior: 'smooth' });
+      setTimeout(updatePageFooter, 350);
+    }
+    updatePageFooter();
   };
+  // v2 fix: the page counter must update while the user scrolls (vertical mode).
+  // v1 never listened for scroll, so "Page 1 of 10" stayed stuck.
+  let footerRaf = null;
+  $('#pageContent').addEventListener('scroll', () => {
+    if (footerRaf) return;
+    footerRaf = requestAnimationFrame(() => { footerRaf = null; updatePageFooter(); });
+  }, { passive: true });
   $('#langChips').addEventListener('click', ev => {
     const chip = ev.target.closest('.chip'); if (!chip) return;
     $$('#langChips .chip').forEach(c => c.classList.remove('active'));
