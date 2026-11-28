@@ -244,6 +244,11 @@ body.high-contrast[data-theme="dark"] { --text: #fff; --bg: #000; }
 .sheet-card { background: var(--surface); width: 100%; max-width: 560px; max-height: 86vh; overflow-y: auto; border-radius: 18px 18px 0 0; padding: 20px; box-shadow: var(--paper-shadow); }
 .sheet-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .sheet-head b { font-size: 17px; }
+/* v3.6.3 (F68-H): note composer sheet. */
+.note-quote { font-size: 14px; color: var(--muted); font-style: italic; margin: 0 0 12px; line-height: 1.5; }
+#noteText { width: 100%; box-sizing: border-box; font: inherit; font-size: 15px; line-height: 1.5; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px; resize: vertical; min-height: 96px; }
+#noteText:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
+.sheet-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 14px; }
 .set-row { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 11px 0; border-bottom: 1px solid var(--border); }
 .set-row select, .set-row input[type="range"] { max-width: 55%; }
 .set-row select { padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); }

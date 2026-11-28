@@ -361,7 +361,7 @@
       </label>
       <div class="set-row"><span data-i18n="sleepTimer">Sleep timer</span><button id="btnSleep" class="mini-btn">⏱ Set timer</button></div>
       <div class="set-note" id="kokoroNote">Voices in your browser — Kokoro for English, Google voice for Hindi and Telugu. Each voice downloads when you open a book in that language, then it works offline. No device voice or install is needed.</div>
-      <div class="set-note" id="appVersion">Version 3.6.2</div>
+      <div class="set-note" id="appVersion">Version 3.6.3</div>
       <button id="btnExportHighlights" class="tool-btn" data-i18n="exportHighlights">Export highlights</button>
     </div>
   </div>
@@ -382,6 +382,22 @@
       <div class="sheet-head"><b>Languages</b><button id="btnLangClose" class="icon-btn">✕</button></div>
       <p class="set-note">Download a language voice for offline listening. The reading language is always detected automatically from the book — this is only for offline downloads.</p>
       <div id="langList" class="lang-list"></div>
+    </div>
+  </div>
+
+  <!-- v3.6.3 (F68-H): in-app note composer. The old "Add a note" was a bare
+       window.prompt() — no composer UI existed at all, so when the native
+       dialog was suppressed (installed PWA / WebView, or after an earlier
+       prompt) the tap did literally nothing. This sheet always opens. -->
+  <div id="noteSheet" class="sheet hidden">
+    <div class="sheet-card">
+      <div class="sheet-head"><b>Add a note</b><button id="btnNoteClose" class="icon-btn">✕</button></div>
+      <p id="noteQuote" class="note-quote"></p>
+      <textarea id="noteText" rows="4" placeholder="Write your note…"></textarea>
+      <div class="sheet-actions">
+        <button id="btnNoteCancel" class="mini-btn">Cancel</button>
+        <button id="btnNoteSave" class="primary-btn">Save note</button>
+      </div>
     </div>
   </div>
 
