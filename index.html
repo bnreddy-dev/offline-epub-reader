@@ -14,7 +14,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta property="og:title" content="Offline EPUB Reader — Read or listen to any book, offline">
 <meta property="og:description" content="Free, private, fully offline EPUB & PDF reader with natural read-aloud in Telugu, Hindi & English. No account, no uploads — your books never leave your device.">
-<meta property="og:image" content="https://bnreddy-dev.github.io/offline-epub-reader/og-banner.png">
+<meta property="og:image" content="https://bnreddy-dev.github.io/offline-epub-reader/og-banner.jpg">
+<meta property="og:image:type" content="image/jpeg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="Offline EPUB Reader — read or listen to any book, offline, in Telugu, Hindi & English">
@@ -24,7 +25,7 @@
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Offline EPUB Reader — Read or listen to any book, offline">
 <meta name="twitter:description" content="Free, private, fully offline EPUB & PDF reader with natural read-aloud in Telugu, Hindi & English.">
-<meta name="twitter:image" content="https://bnreddy-dev.github.io/offline-epub-reader/og-banner.png">
+<meta name="twitter:image" content="https://bnreddy-dev.github.io/offline-epub-reader/og-banner.jpg">
 <title>Offline EPUB Reader</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -793,7 +794,7 @@ body.focus-mode .focus-exit-btn { display: inline-flex; }
       </label>
       <div class="set-row"><span data-i18n="sleepTimer">Sleep timer</span><button id="btnSleep" class="mini-btn">⏱ Set timer</button></div>
       <div class="set-note" id="kokoroNote">Voices in your browser — Kokoro for English, Google voice for Hindi and Telugu. Each voice downloads when you open a book in that language, then it works offline. No device voice or install is needed.</div>
-      <div class="set-note" id="appVersion">Version 3.6.0</div>
+      <div class="set-note" id="appVersion">Version 3.6.1</div>
       <button id="btnExportHighlights" class="tool-btn" data-i18n="exportHighlights">Export highlights</button>
     </div>
   </div>
@@ -919,7 +920,7 @@ window.__PDF_WORKER_SRC__ = "/**\n * @licstart The following is the entire licen
    the same number; on load the app fetches it (no-store) and, if it differs,
    shows a "New version available — Reload" banner. That is the stale-cache
    fix: a hard reload can never silently keep serving an old build. */
-const APP_VERSION = '3.6.0';
+const APP_VERSION = '3.6.1';
 
 /* ---------------- utilities ---------------- */
 const $ = s => document.querySelector(s);

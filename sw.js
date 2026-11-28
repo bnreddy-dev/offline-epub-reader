@@ -15,13 +15,13 @@ const CACHE = 'gtts-v3';
    offline. Network-first so a new deploy is never hidden behind a stale
    shell; the cache is only the offline fallback. The TTS cache (gtts-v3) is
    untouched — its name is never bumped here, so cached audio survives. */
-const SHELL_CACHE = 'app-shell-v1';
+const SHELL_CACHE = 'app-shell-v2';
 const SHELL_URLS = ['./', 'index.html', 'manifest.json',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
-  'icons/apple-touch-icon.png', 'og-banner.png', 'version.json'];
+  'icons/apple-touch-icon.png', 'og-banner.jpg', 'version.json'];
 const SHELL_PATHS = ['/', '/index.html', '/manifest.json',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
-  'icons/apple-touch-icon.png', '/og-banner.png', '/version.json'];
+  'icons/apple-touch-icon.png', '/og-banner.jpg', '/version.json'];
 
 function shellPath(req) {
   try {
