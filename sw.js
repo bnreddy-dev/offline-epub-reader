@@ -7,9 +7,9 @@
    Everything else passes through to the network untouched. If the worker is
    not active, the app plays the audio directly — the worker is a bonus, not
    a dependency. Any failure here falls through to the network. */
-/* v3.1: cache name bumped so the new worker activates cleanly and the old
+/* v3.2: cache name bumped so the new worker activates cleanly and the old
    build's cached audio does not linger. */
-const CACHE = 'gtts-v2';
+const CACHE = 'gtts-v3';
 const MAX_ENTRIES = 120; // Chrome counts ~7MB quota per opaque response; stay small
 const TTS_HOSTS = ['translate.google.com', 'translate.googleapis.com'];
 
@@ -17,7 +17,13 @@ self.addEventListener('install', event => {
   self.skipWaiting();
 });
 self.addEventListener('activate', event => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil((async () => {
+    await self.clients.claim();
+    // drop old TTS caches from earlier versions (never touch other caches:
+    // the app's book-file Cache API fallback lives in its own cache).
+    const names = await caches.keys();
+    await Promise.all(names.filter(n => n !== CACHE && n.indexOf('gtts-') === 0).map(n => caches.delete(n)));
+  })());
 });
 
 function isTtsRequest(req) {
@@ -49,8 +55,13 @@ self.addEventListener('fetch', event => {
     const hit = await cache.match(req);
     if (hit) return hit;
     try {
-      // Strip Range: a fresh, full response is what we want to cache.
-      const clean = new Request(req.url, { method: 'GET', headers: new Headers(), credentials: 'omit' });
+      // v3.2 (F23): the re-fetch MUST send no Referer — Google Translate TTS
+      // returns 404 for a non-Google Referer (F11), and a fetch() rebuilt
+      // inside the worker can carry the worker/page origin as Referer. The
+      // audio element itself uses referrerpolicy="no-referrer"; the worker's
+      // copy must match it, in no-cors mode like a media element. If this
+      // fetch fails for any reason, fall through to the network below.
+      const clean = new Request(req.url, { method: 'GET', mode: 'no-cors', credentials: 'omit', referrerPolicy: 'no-referrer', headers: new Headers() });
       const res = await fetch(clean);
       if (res && res.status === 200) {
         cache.put(req, res.clone()).then(trimCache).catch(() => {});

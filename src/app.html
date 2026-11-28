@@ -156,6 +156,11 @@
           <div id="pageCurrent" class="page">
             <div id="pageContent" class="page-content"></div>
           </div>
+          <!-- v3.2: the second page of a two-page spread (laptop/tablet). Hidden
+               in single-page mode; #pageContent2 is the right-hand page. -->
+          <div id="pageNext" class="page">
+            <div id="pageContent2" class="page-content"></div>
+          </div>
           <!-- v3.1: on-page turn buttons (‹ ›) — a visible, reliable page-turn
                control besides swipe. Shown only in horizontal-flip mode. -->
           <button id="btnPagePrev" class="page-turn-btn prev hidden" aria-label="Previous page">‹</button>
@@ -243,6 +248,12 @@
             <option value="justify">Justify</option>
           </select>
         </label>
+        <!-- v3.2: one or two pages side by side on wide screens (mobile is
+             always one page). -->
+        <div class="set-toggle">
+          <div><div class="t-label">Two-page spread</div><div class="t-sub">One or two pages side by side on wide screens</div></div>
+          <label class="switch"><input id="setTwoPage" type="checkbox" checked><span class="knob"></span></label>
+        </div>
         <label class="set-row"><span data-i18n="largeText">Large text</span>
           <input id="setLargeText" type="checkbox">
         </label>
@@ -271,7 +282,7 @@
           <label class="switch"><input id="setNightLight" type="checkbox"><span class="knob"></span></label>
         </div>
         <label class="set-row"><span data-i18n="direction">Page direction</span>
-          <select id="setDirection"><option value="vertical" data-i18n="dirVertical">Vertical scroll</option><option value="horizontal" data-i18n="dirHorizontal">Horizontal flip</option></select>
+          <select id="setDirection"><option value="vertical" data-i18n="dirVertical">Vertical pages</option><option value="horizontal" data-i18n="dirHorizontal">Horizontal flip</option></select>
         </label>
         <div class="set-toggle">
           <div><div class="t-label">Use 3D effect for page turning</div><div class="t-sub">The page curls over when you turn it</div></div>
@@ -321,7 +332,7 @@
       </label>
       <div class="set-row"><span data-i18n="sleepTimer">Sleep timer</span><button id="btnSleep" class="mini-btn">⏱ Set timer</button></div>
       <div class="set-note" id="kokoroNote">Voices in your browser — Kokoro for English/Hindi, Google voice for Telugu. Each voice downloads when you open a book in that language, then it works offline. No device voice or install is needed.</div>
-      <div class="set-note" id="appVersion">Version 3.1.0</div>
+      <div class="set-note" id="appVersion">Version 3.2.0</div>
       <button id="btnExportHighlights" class="tool-btn" data-i18n="exportHighlights">Export highlights</button>
     </div>
   </div>

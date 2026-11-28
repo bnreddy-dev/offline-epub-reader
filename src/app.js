@@ -32,7 +32,7 @@
    the same number; on load the app fetches it (no-store) and, if it differs,
    shows a "New version available — Reload" banner. That is the stale-cache
    fix: a hard reload can never silently keep serving an old build. */
-const APP_VERSION = '3.1.0';
+const APP_VERSION = '3.2.0';
 
 /* ---------------- utilities ---------------- */
 const $ = s => document.querySelector(s);
@@ -49,9 +49,9 @@ function fmtDur(sec) { const h = Math.floor(sec / 3600), m = Math.round((sec % 3
 /* The app UI language follows the BROWSER language automatically (no picker).
    Book language is auto-detected from the book content only. */
 const I18N = {
-  en: { appTitle: 'Offline EPUB Reader', appSub: 'Read or listen to any book — fully offline, free, private.', openBook: '📖 Open a book', openHint: 'EPUB or PDF — the file never leaves your device.', continueListening: 'Continue listening', continue: '▶ Continue', recentBooks: 'Recent books', noBooksYet: 'No books yet. Open an EPUB or PDF to begin.', backup: '⬇ Backup library', restore: '⬆ Restore library', storage: '🗄 Storage', voices: '🔊 Voices', languages: '🌐 Languages', chapters: 'Chapters', bookmarks: 'Bookmarks', highlights: 'Highlights', searchPh: 'Search in book…', gotoPagePh: 'Page #', go: 'Go', playBelow: '▶ Read aloud', settings: 'Settings', theme: 'Theme', themeBook: 'Book page', themeWhite: 'White', themeDark: 'Dark', direction: 'Page direction', dirVertical: 'Vertical scroll', dirHorizontal: 'Horizontal flip', font: 'Font', fontSerif: 'Serif (book)', fontSans: 'Sans (clean)', fontTelugu: 'Telugu', fontSize: 'Font size', lineSpacing: 'Line spacing', voice: 'Voice', genre: 'Genre', moodFollow: 'Follow mood', sleepDefault: 'Sleep timer default', off: 'Off', largeText: 'Large text', highContrast: 'High contrast', voiceNote: 'Voices in your browser — Kokoro (English/Hindi) + Google Telugu. The book\u2019s language is detected automatically; its voice downloads when you open the book.', exportHighlights: 'Export highlights', nowMood: 'Now:', mood: 'Mood', define: 'Define', hear: '🔊 Hear', highlight: '✎ Highlight', copy: 'Copy' },
-  te: { appTitle: 'ఆఫ్‌లైన్ EPUB రీడర్', appSub: 'ఏ పుస్తకాన్నైనా చదవండి లేదా వినండి — పూర్తిగా ఆఫ్‌లైన్, ఉచితం, ప్రైవేట్.', openBook: '📖 పుస్తకం తెరవండి', openHint: 'EPUB లేదా PDF — ఫైల్ మీ పరికరాన్ని వదలదు.', continueListening: 'వినడం కొనసాగించండి', continue: '▶ కొనసాగించు', recentBooks: 'ఇటీవలి పుస్తకాలు', noBooksYet: 'ఇంకా పుస్తకాలు లేవు. ప్రారంభించడానికి EPUB లేదా PDF తెరవండి.', backup: '⬇ లైబ్రరీ బ్యాకప్', restore: '⬆ లైబ్రరీ పునరుద్ధరణ', storage: '🗄 నిల్వ', voices: '🔊 గొంతులు', languages: '🌐 భాషలు', chapters: 'అధ్యాయాలు', bookmarks: 'బుక్‌మార్కులు', highlights: 'హైలైట్లు', searchPh: 'పుస్తకంలో వెతకండి…', gotoPagePh: 'పేజీ #', go: 'వెళ్ళు', playBelow: '▶ బిగ్గరగా చదవండి', settings: 'సెట్టింగులు', theme: 'థీమ్', themeBook: 'పుస్తక పేజీ', themeWhite: 'తెలుపు', themeDark: 'చీకటి', direction: 'పేజీ దిశ', dirVertical: 'నిలువు స్క్రోల్', dirHorizontal: 'అడ్డంగా తిప్పండి', font: 'ఫాంట్', fontSerif: 'సెరిఫ్ (పుస్తకం)', fontSans: 'సాన్స్ (స్పష్టం)', fontTelugu: 'తెలుగు', fontSize: 'అక్షర పరిమాణం', lineSpacing: 'లైన్ అంతరం', voice: 'గొంతు', genre: 'శైలి', moodFollow: 'మూడ్ అనుసరించు', sleepDefault: 'స్లీప్ టైమర్', off: 'ఆపివేయి', largeText: 'పెద్ద అక్షరాలు', highContrast: 'అధిక కాంట్రాస్ట్', voiceNote: 'బ్రౌజర్‌లో గొంతులు — Kokoro (ఇంగ్లీష్/హిందీ) + Google తెలుగు. పుస్తక భాష ఆటోమేటిక్‌గా గుర్తించబడుతుంది; దాని గొంతు పుస్తకం తెరవగానే డౌన్‌లోడ్ అవుతుంది.', exportHighlights: 'హైలైట్లు ఎగుమతి', nowMood: 'ఇప్పుడు:', mood: 'మూడ్', define: 'అర్థం', hear: '🔊 వినండి', highlight: '✎ హైలైట్', copy: 'కాపీ' },
-  hi: { appTitle: 'ऑफ़लाइन EPUB रीडर', appSub: 'कोई भी किताब पढ़ें या सुनें — पूरी तरह ऑफ़लाइन, मुफ़्त, निजी।', openBook: '📖 किताब खोलें', openHint: 'EPUB या PDF — फ़ाइल आपके डिवाइस से बाहर नहीं जाती।', continueListening: 'सुनना जारी रखें', continue: '▶ जारी रखें', recentBooks: 'हाल की किताबें', noBooksYet: 'अभी कोई किताब नहीं। शुरू करने के लिए EPUB या PDF खोलें।', backup: '⬇ लाइब्रेरी बैकअप', restore: '⬆ लाइब्रेरी पुनर्स्थापित करें', storage: '🗄 भंडारण', voices: '🔊 आवाज़ें', languages: '🌐 भाषाएँ', chapters: 'अध्याय', bookmarks: 'बुकमार्क', highlights: 'हाइलाइट', searchPh: 'किताब में खोजें…', gotoPagePh: 'पृष्ठ #', go: 'जाएँ', playBelow: '▶ ज़ोर से पढ़ें', settings: 'सेटिंग्स', theme: 'थीम', themeBook: 'किताब का पन्ना', themeWhite: 'सफ़ेद', themeDark: 'अंधेरा', direction: 'पन्ने की दिशा', dirVertical: 'ऊर्ध्व स्क्रॉल', dirHorizontal: 'क्षैतिज पलटें', font: 'फ़ॉन्ट', fontSerif: 'सेरिफ़ (किताब)', fontSans: 'सैन्स (साफ़)', fontTelugu: 'तेलुगु', fontSize: 'अक्षर आकार', lineSpacing: 'पंक्ति अंतर', voice: 'आवाज़', genre: 'शैली', moodFollow: 'मूड का पालन करें', sleepDefault: 'स्लीप टाइमर', off: 'बंद', largeText: 'बड़े अक्षर', highContrast: 'उच्च कंट्रास्ट', voiceNote: 'ब्राउज़र में आवाज़ें — Kokoro (English/Hindi) + Google Telugu. किताब की भाषा अपने आप पहचानी जाती है; उसकी आवाज़ किताब खोलते ही डाउनलोड होती है।', exportHighlights: 'हाइलाइट निर्यात करें', nowMood: 'अभी:', mood: 'मूड', define: 'अर्थ', hear: '🔊 सुनें', highlight: '✎ हाइलाइट', copy: 'कॉपी' }
+  en: { appTitle: 'Offline EPUB Reader', appSub: 'Read or listen to any book — fully offline, free, private.', openBook: '📖 Open a book', openHint: 'EPUB or PDF — the file never leaves your device.', continueListening: 'Continue listening', continue: '▶ Continue', recentBooks: 'Recent books', noBooksYet: 'No books yet. Open an EPUB or PDF to begin.', backup: '⬇ Backup library', restore: '⬆ Restore library', storage: '🗄 Storage', voices: '🔊 Voices', languages: '🌐 Languages', chapters: 'Chapters', bookmarks: 'Bookmarks', highlights: 'Highlights', searchPh: 'Search in book…', gotoPagePh: 'Page #', go: 'Go', playBelow: '▶ Read aloud', settings: 'Settings', theme: 'Theme', themeBook: 'Book page', themeWhite: 'White', themeDark: 'Dark', direction: 'Page direction', dirVertical: 'Vertical pages', dirHorizontal: 'Horizontal flip', font: 'Font', fontSerif: 'Serif (book)', fontSans: 'Sans (clean)', fontTelugu: 'Telugu', fontSize: 'Font size', lineSpacing: 'Line spacing', voice: 'Voice', genre: 'Genre', moodFollow: 'Follow mood', sleepDefault: 'Sleep timer default', off: 'Off', largeText: 'Large text', highContrast: 'High contrast', voiceNote: 'Voices in your browser — Kokoro (English/Hindi) + Google Telugu. The book\u2019s language is detected automatically; its voice downloads when you open the book.', exportHighlights: 'Export highlights', nowMood: 'Now:', mood: 'Mood', define: 'Define', hear: '🔊 Hear', highlight: '✎ Highlight', copy: 'Copy' },
+  te: { appTitle: 'ఆఫ్‌లైన్ EPUB రీడర్', appSub: 'ఏ పుస్తకాన్నైనా చదవండి లేదా వినండి — పూర్తిగా ఆఫ్‌లైన్, ఉచితం, ప్రైవేట్.', openBook: '📖 పుస్తకం తెరవండి', openHint: 'EPUB లేదా PDF — ఫైల్ మీ పరికరాన్ని వదలదు.', continueListening: 'వినడం కొనసాగించండి', continue: '▶ కొనసాగించు', recentBooks: 'ఇటీవలి పుస్తకాలు', noBooksYet: 'ఇంకా పుస్తకాలు లేవు. ప్రారంభించడానికి EPUB లేదా PDF తెరవండి.', backup: '⬇ లైబ్రరీ బ్యాకప్', restore: '⬆ లైబ్రరీ పునరుద్ధరణ', storage: '🗄 నిల్వ', voices: '🔊 గొంతులు', languages: '🌐 భాషలు', chapters: 'అధ్యాయాలు', bookmarks: 'బుక్‌మార్కులు', highlights: 'హైలైట్లు', searchPh: 'పుస్తకంలో వెతకండి…', gotoPagePh: 'పేజీ #', go: 'వెళ్ళు', playBelow: '▶ బిగ్గరగా చదవండి', settings: 'సెట్టింగులు', theme: 'థీమ్', themeBook: 'పుస్తక పేజీ', themeWhite: 'తెలుపు', themeDark: 'చీకటి', direction: 'పేజీ దిశ', dirVertical: 'నిలువు పేజీలు', dirHorizontal: 'అడ్డంగా తిప్పండి', font: 'ఫాంట్', fontSerif: 'సెరిఫ్ (పుస్తకం)', fontSans: 'సాన్స్ (స్పష్టం)', fontTelugu: 'తెలుగు', fontSize: 'అక్షర పరిమాణం', lineSpacing: 'లైన్ అంతరం', voice: 'గొంతు', genre: 'శైలి', moodFollow: 'మూడ్ అనుసరించు', sleepDefault: 'స్లీప్ టైమర్', off: 'ఆపివేయి', largeText: 'పెద్ద అక్షరాలు', highContrast: 'అధిక కాంట్రాస్ట్', voiceNote: 'బ్రౌజర్‌లో గొంతులు — Kokoro (ఇంగ్లీష్/హిందీ) + Google తెలుగు. పుస్తక భాష ఆటోమేటిక్‌గా గుర్తించబడుతుంది; దాని గొంతు పుస్తకం తెరవగానే డౌన్‌లోడ్ అవుతుంది.', exportHighlights: 'హైలైట్లు ఎగుమతి', nowMood: 'ఇప్పుడు:', mood: 'మూడ్', define: 'అర్థం', hear: '🔊 వినండి', highlight: '✎ హైలైట్', copy: 'కాపీ' },
+  hi: { appTitle: 'ऑफ़लाइन EPUB रीडर', appSub: 'कोई भी किताब पढ़ें या सुनें — पूरी तरह ऑफ़लाइन, मुफ़्त, निजी।', openBook: '📖 किताब खोलें', openHint: 'EPUB या PDF — फ़ाइल आपके डिवाइस से बाहर नहीं जाती।', continueListening: 'सुनना जारी रखें', continue: '▶ जारी रखें', recentBooks: 'हाल की किताबें', noBooksYet: 'अभी कोई किताब नहीं। शुरू करने के लिए EPUB या PDF खोलें।', backup: '⬇ लाइब्रेरी बैकअप', restore: '⬆ लाइब्रेरी पुनर्स्थापित करें', storage: '🗄 भंडारण', voices: '🔊 आवाज़ें', languages: '🌐 भाषाएँ', chapters: 'अध्याय', bookmarks: 'बुकमार्क', highlights: 'हाइलाइट', searchPh: 'किताब में खोजें…', gotoPagePh: 'पृष्ठ #', go: 'जाएँ', playBelow: '▶ ज़ोर से पढ़ें', settings: 'सेटिंग्स', theme: 'थीम', themeBook: 'किताब का पन्ना', themeWhite: 'सफ़ेद', themeDark: 'अंधेरा', direction: 'पन्ने की दिशा', dirVertical: 'ऊर्ध्व पृष्ठ', dirHorizontal: 'क्षैतिज पलटें', font: 'फ़ॉन्ट', fontSerif: 'सेरिफ़ (किताब)', fontSans: 'सैन्स (साफ़)', fontTelugu: 'तेलुगु', fontSize: 'अक्षर आकार', lineSpacing: 'पंक्ति अंतर', voice: 'आवाज़', genre: 'शैली', moodFollow: 'मूड का पालन करें', sleepDefault: 'स्लीप टाइमर', off: 'बंद', largeText: 'बड़े अक्षर', highContrast: 'उच्च कंट्रास्ट', voiceNote: 'ब्राउज़र में आवाज़ें — Kokoro (English/Hindi) + Google Telugu. किताब की भाषा अपने आप पहचानी जाती है; उसकी आवाज़ किताब खोलते ही डाउनलोड होती है।', exportHighlights: 'हाइलाइट निर्यात करें', nowMood: 'अभी:', mood: 'मूड', define: 'अर्थ', hear: '🔊 सुनें', highlight: '✎ हाइलाइट', copy: 'कॉपी' }
 };
 function browserUiLang() {
   const l = (navigator.language || 'en').toLowerCase();
@@ -73,7 +73,7 @@ const SETTINGS_KEY = 'epubreader.settings.v1';
    chapter open), defPreview (auto-show definition on selection),
    offlineDict (offline dictionary on/off), brightness (30–100),
    brightnessOn, nightLight. */
-const defaults = { theme: 'book', direction: 'horizontal', font: 'serif', fontSize: 3, lineSpacing: 2, uiLang: 'en', genre: 'thriller', moodFollow: true, sleepDefault: 0, largeText: false, highContrast: false, align: 'default', page3d: true, volumeKeys: false, autoReadAloud: false, defPreview: true, offlineDict: true, brightness: 100, brightnessOn: false, nightLight: false };
+const defaults = { theme: 'book', direction: 'horizontal', font: 'serif', fontSize: 3, lineSpacing: 2, uiLang: 'en', genre: 'thriller', moodFollow: true, sleepDefault: 0, largeText: false, highContrast: false, align: 'default', page3d: true, volumeKeys: false, autoReadAloud: false, defPreview: true, offlineDict: true, brightness: 100, brightnessOn: false, nightLight: false, twoPage: true };
 let settings = Object.assign({}, defaults);
 try { const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); settings = Object.assign({}, defaults, s); } catch (e) {}
 function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {} }
@@ -83,8 +83,18 @@ const DB_NAME = 'epubreader', DB_VER = 2;
 let dbPromise = null;
 function openDB() {
   if (dbPromise) return dbPromise;
+  // v3.2 (F24): IndexedDB can be missing or blocked in some browsers. A
+  // rejected promise used to be cached forever, so one failed open poisoned
+  // every later storage call for the whole session. Reset on failure so a
+  // later attempt can retry, and fail fast with a clear error when IDB
+  // does not exist at all.
+  if (typeof indexedDB === 'undefined') {
+    dbPromise = Promise.reject(new Error('IndexedDB is not available in this browser'));
+    return dbPromise;
+  }
   dbPromise = new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VER);
+    let req;
+    try { req = indexedDB.open(DB_NAME, DB_VER); } catch (e) { dbPromise = null; reject(e); return; }
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains('books')) db.createObjectStore('books', { keyPath: 'id' });
@@ -92,7 +102,8 @@ function openDB() {
       if (!db.objectStoreNames.contains('audio')) db.createObjectStore('audio', { keyPath: 'key' });
     };
     req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onerror = () => { dbPromise = null; reject(req.error); };
+    req.onblocked = () => { dbPromise = null; reject(new Error('IndexedDB open was blocked')); };
   });
   return dbPromise;
 }
@@ -102,6 +113,60 @@ function idbDelete(store, key) { return openDB().then(db => new Promise((res, re
 function idbAll(store) { return openDB().then(db => new Promise((res, rej) => { const req = db.transaction(store).objectStore(store).getAll(); req.onsuccess = () => res(req.result || []); req.onerror = () => rej(req.error); })); }
 function idbCountChapters(bookId) { return idbAll('chapters').then(all => all.filter(c => c.key.indexOf(bookId + '::') === 0).length); }
 function idbClearAudioForBook(bookId) { return idbAll('audio').then(async all => { for (const r of all.filter(r => r.key.indexOf(bookId + '::') === 0)) await idbDelete('audio', r.key).catch(() => {}); }); }
+
+/* v3.2 (F24) — book-file fallback via the Cache API. If IndexedDB cannot
+   store the book (blocked / denied storage in some browsers — the v3.1 live
+   test hit exactly this: the app warned "could not be saved" and Continue
+   found no file), the EPUB/PDF bytes go into the Cache API instead. It is
+   the same store the voice cache already uses, so it works wherever the
+   voice download persists. Type/title ride in localStorage; the bytes are
+   verified by reading them back, same as the IndexedDB path. */
+const BOOK_CACHE = 'epubreader-books-v1';
+function bookCacheKey(id) { return '/__book__/' + id; }
+async function bookCachePut(id, buf) {
+  const cache = await caches.open(BOOK_CACHE);
+  await cache.put(new Request(bookCacheKey(id)), new Response(buf));
+  const check = await cache.match(new Request(bookCacheKey(id)));
+  if (!check) throw new Error('cache save did not stick');
+}
+async function bookCacheGet(id) {
+  const cache = await caches.open(BOOK_CACHE);
+  const res = await cache.match(new Request(bookCacheKey(id)));
+  if (!res) return null;
+  const buf = await res.arrayBuffer();
+  if (!buf || !buf.byteLength) return null;
+  return buf;
+}
+async function saveBookFile(meta, isPdf, buf) {
+  try {
+    await idbPut('books', { id: meta.id, type: isPdf ? 'pdf' : 'epub', data: buf, title: meta.title });
+    const check = await idbGet('books', meta.id);
+    if (!check || !check.data) throw new Error('save did not stick');
+    return { ok: true, via: 'idb' };
+  } catch (e) {
+    const idbErr = e;
+    try {
+      try { localStorage.setItem('epubreader.bookmeta.' + meta.id, JSON.stringify({ type: isPdf ? 'pdf' : 'epub', title: meta.title })); } catch (e2) {}
+      await bookCachePut(meta.id, buf);
+      const check = await bookCacheGet(meta.id);
+      if (!check) throw new Error('cache save did not stick');
+      return { ok: true, via: 'cache', idbError: idbErr };
+    } catch (e2) {
+      return { ok: false, via: null, error: idbErr, cacheError: e2 };
+    }
+  }
+}
+async function loadBookFile(id) {
+  const rec = await idbGet('books', id).catch(() => null);
+  if (rec && rec.data) return rec;
+  const buf = await bookCacheGet(id).catch(() => null);
+  if (buf) {
+    let bm = null;
+    try { bm = JSON.parse(localStorage.getItem('epubreader.bookmeta.' + id) || 'null'); } catch (e) {}
+    return { id, type: (bm && bm.type) || 'epub', data: buf, title: (bm && bm.title) || '' };
+  }
+  return null;
+}
 
 /* ---------------- library index (localStorage) ---------------- */
 const LIB_KEY = 'epubreader.library.v1';
@@ -129,6 +194,9 @@ const state = {
   totalPages: 0,
   pageTotal: 0,
   pageTotalKey: '',
+  pageNodes: [],      // v3.2: the chapter's display nodes in order (re-attached on every paginate)
+  measureH1: null,    // v3.2: the chapter-title h1 used only for measuring page 0
+  followNarration: true, // v3.2: view follows the sentence being read; a manual page turn detaches it (narration keeps going)
   cacheCount: 0,
   preloadIdx: -1,
   preloadBusy: false,
@@ -147,6 +215,22 @@ const state = {
   searchIndex: [],
 };
 let pauseTimer = null;
+let suppressClick = false; // v3.2: a drag-curl release must not fire tap-to-hear
+/* v3.2: the page height is NOT fixed — the download bar shows/hides (37px),
+   the keyboard/orientation/split-screen change the viewport. Pagination is
+   computed from the live page height, so a height change after paginate()
+   leaves pages packed for the wrong height (v3.2 test: pages packed while
+   the bar was hidden overflowed by 3px once it showed — and up to 37px).
+   A ResizeObserver on the flip-wrap re-paginates whenever its size changes.
+   No loop: paginate() moves text between pages, it never changes the wrap's
+   own size (its content is absolutely positioned). Debounced, horizontal
+   mode only — same guard as the window-resize handler. */
+let flipRO = null, flipROTimer = null;
+function onFlipResize() {
+  if (!state.meta || settings.direction !== 'horizontal') return;
+  clearTimeout(flipROTimer);
+  flipROTimer = setTimeout(() => { if (state.meta && settings.direction === 'horizontal') paginate(); }, 120);
+}
 
 /* ---------------- moods & genres (spec §7) ---------------- */
 const MOODS = {
@@ -475,9 +559,24 @@ function gtPoolEl() {
 }
 function gtAudioFor(key, url) {
   let slot = GT_POOL.find(s => s.key === key);
-  if (slot) return slot;
+  if (slot) {
+    // v3.2: a RELEASED slot has no src (gtRelease removes it) — reusing it
+    // without re-setting src leaves an element that can never load, so
+    // gtPrepare waits the whole 20s timeout for events that never fire
+    // (and the narration looks frozen). Re-attach the URL whenever the
+    // element has nothing to load, or a different URL than it last had.
+    if (!slot.el.currentSrc || slot.url !== url) {
+      slot.url = url;
+      slot.justLoaded = true; // a fresh load just started — any error on the
+      slot.el.src = url;      // element is stale, from the previous URL
+      try { slot.el.load(); } catch (e) {}
+    }
+    return slot;
+  }
   slot = gtPoolEl();
   slot.key = key;
+  slot.url = url;
+  slot.justLoaded = true;
   slot.busy = true;
   slot.el.src = url;
   try { slot.el.load(); } catch (e) {}
@@ -487,6 +586,8 @@ function gtRelease(slot) {
   if (!slot) return;
   slot.busy = false;
   slot.key = '';
+  slot.url = '';
+  slot.justLoaded = false;
   try { slot.el.removeAttribute('src'); slot.el.load(); } catch (e) {}
 }
 function gtReleaseAll() {
@@ -502,23 +603,45 @@ function gtSentenceKey(chapter, idx) { return (state.meta ? state.meta.id : 'x')
    12s: on a slow-but-working link canplaythrough fires well before that
    (the browser only needs a few KB buffered); only a dead/hung link waits
    the whole timeout. */
+/* v3.2: resolves a STRICT boolean — true (buffered) or false (failed).
+   v3.1 resolved the string 'timeout' when a load hung with no data, and
+   'timeout' is truthy: the download bar counted hung sentences as buffered
+   (0→13/26 with possibly zero audio bytes) AND playClip tried to play an
+   element with no audio, hanging on play() forever. A hung load is a
+   failure, never a success. GT_LAST_FAIL tells the caller WHY it failed:
+   'error' (fast failure — worth one retry) or 'timeout' (hung link — do
+   not retry, it just burns ~20s per sentence). */
+let GT_LAST_FAIL = '';
 function gtPrepare(key, text, lang) {
   const url = googleTtsUrl(text, lang);
   const slot = gtAudioFor(key, url);
   const a = slot.el;
+  const justLoaded = slot.justLoaded; // a fresh load just started on this element
+  slot.justLoaded = false;
   if (a.readyState >= 3) return Promise.resolve(true); // already buffered
+  // v3.2: an element that ALREADY failed for THIS url (error set, or
+  // NETWORK_NO_SOURCE) will never fire canplaythrough/error again — resolve
+  // false at once instead of waiting the whole timeout for events that
+  // cannot come. But when a fresh load just started, any error on the
+  // element is stale from the PREVIOUS url — wait for the new load's own
+  // outcome instead of failing fast on the old error.
+  if (!justLoaded && (a.error || a.networkState === 3)) { GT_LAST_FAIL = 'error'; return Promise.resolve(false); }
   return new Promise(resolve => {
     let done = false;
-    const finish = v => { if (done) return; done = true; a.removeEventListener('canplaythrough', onOk); a.removeEventListener('error', onErr); resolve(v); };
+    let timer = null;
+    const finish = v => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      a.removeEventListener('canplaythrough', onOk);
+      a.removeEventListener('error', onErr);
+      resolve(v);
+    };
     const onOk = () => finish(true);
-    const onErr = () => finish(false);
+    const onErr = () => { GT_LAST_FAIL = 'error'; finish(false); };
     a.addEventListener('canplaythrough', onOk);
     a.addEventListener('error', onErr);
-    // v3.1: on timeout, only count the sentence as buffered if the audio
-    // REALLY has data (readyState >= 3, HAVE_FUTURE_DATA). readyState 2
-    // (HAVE_CURRENT_DATA) can be reached by a hung/partial load and is NOT
-    // playable audio — counting it made the bar creep up on a dead link.
-    setTimeout(() => finish(a.readyState >= 3 ? true : 'timeout'), GT_FETCH_TIMEOUT_MS);
+    timer = setTimeout(() => { GT_LAST_FAIL = 'timeout'; finish(false); }, GT_FETCH_TIMEOUT_MS);
   });
 }
 /* Play one prepared Google sentence through its pooled audio element.
@@ -543,7 +666,20 @@ async function gtPlay(slot, text, rate, token) {
   };
   NEURAL.wordTimer = setTimeout(tick, 30);
   a.playbackRate = clamp(rate, 0.5, 2);
-  try { await a.play(); } catch (e) { clearTimeout(NEURAL.wordTimer); return false; }
+  try {
+    // v3.2: play() can pend FOREVER on an element with no data (or reject
+    // under autoplay policy). v3.1 awaited it with no timeout, so the whole
+    // narration hung at sentence 0 — Pause icon stuck, counter frozen at
+    // 0/26, no error anywhere. Race it: 8s is far past any healthy start.
+    const p = a.play();
+    if (p && p.catch) p.catch(() => {}); // never an unhandled rejection
+    await Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('play() timed out')), 8000))]);
+  } catch (e) {
+    clearTimeout(NEURAL.wordTimer);
+    try { a.pause(); } catch (e2) {} // a late-resolving play() must not blip audio later
+    console.warn('gtPlay: play() failed —', e && e.name ? e.name + ': ' + e.message : e);
+    return false;
+  }
   const finished = await new Promise(res => {
     let done = false;
     let watchdog = null;
@@ -652,9 +788,17 @@ async function playClip(clip, lang, opts) {
   try {
     a.playbackRate = 1;
     a.src = url;
-    await a.play();
+    // v3.2 (shared with the Google path): play() can pend forever or reject
+    // under autoplay policy — race it, or Kokoro EN/HI hangs exactly like
+    // Google Telugu did (counter frozen, no error). A failed play returns
+    // false so the narration skips the line instead of halting silently.
+    const p = a.play();
+    if (p && p.catch) p.catch(() => {}); // never an unhandled rejection
+    await Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('play() timed out')), 8000))]);
   } catch (e) {
     clearTimeout(NEURAL.wordTimer);
+    try { a.pause(); } catch (e2) {} // a late-resolving play() must not blip audio later
+    console.warn('playClip (Kokoro): play() failed —', e && e.name ? e.name + ': ' + e.message : e);
     URL.revokeObjectURL(url);
     return false;
   }
@@ -1008,6 +1152,7 @@ async function loadChapter(chIdx, opts) {
   const rec = await loadChapterText(chIdx);
   if (!rec) return false;
   state.currentChapter = chIdx;
+  state.currentPage = 0; // a fresh chapter opens on its first page; paginate() preserves the page after that
   state.paragraphs = rec.paras;
   const mood = moodOfChapter(state.chapters[chIdx]);
   state.sentences = parasToSentences(rec.paras, mood);
@@ -1112,11 +1257,12 @@ function applyPerBookSettings() {
   if (pb.direction) settings.direction = pb.direction;
   if (pb.speed) state.speed = pb.speed;
   if (pb.align) settings.align = pb.align;
+  if (typeof pb.twoPage === 'boolean') settings.twoPage = pb.twoPage;
   applyTheme(); applyFont();
 }
 function savePerBookSettings() {
   if (!state.meta) return;
-  state.perBook = { theme: settings.theme, font: settings.font, direction: settings.direction, speed: state.speed, align: settings.align };
+  state.perBook = { theme: settings.theme, font: settings.font, direction: settings.direction, speed: state.speed, align: settings.align, twoPage: settings.twoPage };
   try { localStorage.setItem('epubreader.pb.' + state.meta.id, JSON.stringify(state.perBook)); } catch (e) {}
 }
 
@@ -1207,10 +1353,12 @@ async function warmChapterAudio(chIdx, token, showBar) {
         const key = state.meta.id + '::' + chIdx + '::' + i + '::c' + ci;
         const got = await gtPrepare(key, chunks[ci], 'te');
         if (!got) {
-          // v3.1: retry once after a backoff — but ONLY for a fast error.
+          // v3.2: retry once after a backoff — but ONLY for a fast error.
           // A 'timeout' means the link is hung/dead; retrying it just burns
-          // ~12s more per sentence and keeps the bar at 0% for minutes.
-          if (got === 'timeout') { ok = false; break; }
+          // ~20s more per sentence and keeps the bar at 0% for minutes.
+          // And a timeout must NEVER count as buffered (v3.1's truthy
+          // 'timeout' string did exactly that — the bar moved on no audio).
+          if (GT_LAST_FAIL === 'timeout') { ok = false; break; }
           await sleep(2000);
           if (token !== VOICE_PREP.token) return null;
           const got2 = await gtPrepare(key, chunks[ci], 'te');
@@ -1356,9 +1504,13 @@ function renderChapter() {
   content.classList.remove('two-col');
   const ch = state.chapters[state.currentChapter];
   const firstIsTitle = state.paragraphs.length && ['h1','h2','h3'].indexOf(state.paragraphs[0].kind) >= 0 && state.paragraphs[0].text.replace(/\s+/g, ' ').trim() === (ch ? ch.title : '').replace(/\s+/g, ' ').trim();
+  // v3.2: the title h1 is kept OUT of the page-node list — it is only used
+  // to measure page 0. The page nodes are every other child (paragraphs
+  // AND figures, so images show in horizontal mode too).
+  state.measureH1 = null;
   if (!firstIsTitle) {
-    const h = el('h1', null, ch ? ch.title : '');
-    content.appendChild(h);
+    state.measureH1 = el('h1', null, ch ? ch.title : '');
+    content.appendChild(state.measureH1);
   }
   state.paragraphs.forEach((p, pi) => {
     if (p.kind === 'img') {
@@ -1377,6 +1529,11 @@ function renderChapter() {
     node.dataset.para = pi;
     content.appendChild(node);
   });
+  // v3.2: the chapter's display nodes in reading order. paginate() re-attaches
+  // ALL of them before measuring — after showPage runs, nodes live only on
+  // the displayed page(s), and repaginating from that visible subset would
+  // silently drop the rest of the chapter.
+  state.pageNodes = Array.from(content.children).filter(n => n !== state.measureH1);
   invalidatePageTotal();
   paginate();
   updatePageFooter();
@@ -1386,63 +1543,146 @@ function renderChapter() {
   });
   updateChapterList();
 }
-function paraElements() { return Array.from($('#pageContent').children).filter(n => n.dataset && n.dataset.para != null); }
+function paraElements() {
+  // v3.2: paragraphs live on BOTH page panels in two-page mode.
+  const out = [];
+  ['#pageContent', '#pageContent2'].forEach(sel => {
+    const c = document.querySelector(sel);
+    if (c) Array.from(c.children).forEach(n => { if (n.dataset && n.dataset.para != null) out.push(n); });
+  });
+  return out;
+}
+/* v3.2 — how many pages are shown at once. Mobile (narrow) is ALWAYS one
+   page (locked layout rule); laptop/tablet show one or two by the user's
+   "Two-page spread" setting. */
+function perView() { return (settings.twoPage !== false && window.innerWidth >= 760) ? 2 : 1; }
+function pageStep() { return perView(); }
+function applyPageLayout() {
+  const wrap = $('#flipWrap');
+  if (wrap) wrap.classList.toggle('two-page', perView() === 2);
+}
+/* v3.2 — a node's FULL height on the page, margins included. offsetHeight
+   alone excludes margins, and every paragraph carries a 1em bottom margin:
+   packing by offsetHeight alone put ~18px too much per paragraph on a page
+   and the last page of a chapter overflowed (v3.2 test: 588px in a 510px
+   page). Margins collapse between neighbours, so this slightly over-counts
+   — a page may end a line early, but it can never overflow. */
+function outerH(n) {
+  const cs = getComputedStyle(n);
+  return (n.offsetHeight || 0) + (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0);
+}
+function marginsH(n) {
+  const cs = getComputedStyle(n);
+  return (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0);
+}
+/* v3.2 — split a paragraph that is taller than ONE screenful into
+   sentence-sized chunks (each a whole-sentence <p>), so no page ever needs
+   scrolling. A single sentence taller than a page is split by words as a
+   last resort. Chunks keep dataset.para (so sentence lookup still finds
+   them) plus dataset.chunk + _chunkText (their own text, so the highlight
+   code never re-expands a chunk to the full paragraph). Idempotent: already
+   split chunks measure small and are left alone; if the font grows, a chunk
+   is split further from its OWN text. */
+function wordSplitNode(n, pageH) {
+  let cur = n, guard = 0;
+  while (cur && outerH(cur) > pageH && guard++ < 10) {
+    const pi = Number(cur.dataset.para);
+    const text = cur._chunkText || (state.paragraphs[pi] && state.paragraphs[pi].text) || cur.textContent || '';
+    const words = text.split(/\s+/).filter(Boolean);
+    if (words.length < 2) return; // one huge word: cannot split; the page clips it (overflow hidden)
+    const limit = Math.max(40, pageH - marginsH(cur)); // the words must fit inside the margins too
+    let lo = 1, hi = words.length, best = 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      cur.textContent = words.slice(0, mid).join(' ');
+      if ((cur.offsetHeight || 0) <= limit) { best = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    if (best >= words.length) { cur.textContent = text; return; }
+    const first = words.slice(0, best).join(' '), rest = words.slice(best).join(' ');
+    cur.textContent = first; cur._chunkText = first; cur.dataset.chunk = '1';
+    const tag = (cur.tagName || 'P').toLowerCase();
+    const c2 = el(tag === 'li' || tag === 'blockquote' ? tag : 'p', null, rest);
+    c2.dataset.para = pi; c2.dataset.chunk = '1'; c2._chunkText = rest;
+    cur.after(c2);
+    cur = c2;
+  }
+}
+function splitOversizedNodes(content, pageH) {
+  paraElements().forEach(n => {
+    if (outerH(n) <= pageH) return;
+    const tag = (n.tagName || 'P').toLowerCase();
+    if (tag === 'h1' || tag === 'h2' || tag === 'h3' || tag === 'h4') return; // headings are never split
+    const pi = Number(n.dataset.para);
+    const text = n._chunkText || (state.paragraphs[pi] && state.paragraphs[pi].text) || n.textContent || '';
+    const sents = splitSentences(text);
+    if (sents.length < 2) { wordSplitNode(n, pageH); return; }
+    const frag = document.createDocumentFragment();
+    sents.forEach(s => {
+      const c = el(tag === 'li' || tag === 'blockquote' ? tag : 'p', null, s);
+      c.dataset.para = pi; c.dataset.chunk = '1'; c._chunkText = s;
+      frag.appendChild(c);
+    });
+    n.replaceWith(frag);
+  });
+  // second pass: a chunk still too tall (one giant sentence) → word-split it
+  paraElements().forEach(n => { if (outerH(n) > pageH) wordSplitNode(n, pageH); });
+}
 function paginate() {
   const content = $('#pageContent');
+  // v3.2: the layout mode (one/two panels) sets the page WIDTH — it must be
+  // applied BEFORE measuring, or every height is measured at the wrong width.
+  applyPageLayout();
   state.pages = [];
   state.totalPages = 0;
   invalidatePageTotal();
-  if (settings.direction !== 'horizontal') { state.totalPages = 1; return; }
-  const area = $('#flipWrap');
-  const pageH = Math.max(200, area.clientHeight - 8);
-  const nodes = paraElements();
+  content.innerHTML = '';
+  if (state.measureH1) content.appendChild(state.measureH1);
+  (state.pageNodes || []).forEach(n => content.appendChild(n));
+  const cs = getComputedStyle(content);
+  const padV = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+  let pageH = content.clientHeight - padV;
+  // the reader may still be hidden (open flow paginates before the reader
+  // shows) — then clientHeight is 0 and the estimate below stands in until
+  // openReader() repaginates with real measurements once it is visible.
+  if (pageH < 100) pageH = Math.max(200, window.innerHeight - 320);
+  splitOversizedNodes(content, pageH);
+  state.pageNodes = Array.from(content.children).filter(n => n !== state.measureH1);
+  const nodes = state.pageNodes;
   let pages = [], cur = [], acc = 0;
   const h1 = content.querySelector('h1');
-  if (h1) acc += h1.offsetHeight + 10;
+  if (h1) acc += outerH(h1);
   nodes.forEach(n => {
-    const h = n.offsetHeight || 40;
+    const h = outerH(n) || 40;
     if (acc + h > pageH && cur.length) { pages.push(cur); cur = []; acc = 0; }
     cur.push(n); acc += h;
   });
   if (cur.length) pages.push(cur);
   state.pages = pages;
   state.totalPages = Math.max(1, pages.length);
-  showPage(0, true);
+  // stay on the page being viewed (a resize / font change must not lose it);
+  // a fresh chapter opens at 0 because loadChapter resets currentPage first.
+  showPage(clamp(state.currentPage || 0, 0, state.totalPages - 1), true);
 }
 /* v3 — a REAL page turn. The old page becomes a leaf that lifts off the
    spine, curls over (with a moving shade, like paper bending) and settles,
-   revealing the new page underneath. Not a slide, not a fade. */
-function showPage(idx, instant) {
-  const content = $('#pageContent');
-  if (settings.direction !== 'horizontal' || !state.pages.length) { content.style.display = ''; state.currentPage = 0; updatePageFooter(); return; }
-  idx = clamp(idx, 0, state.pages.length - 1);
-  const doShow = () => {
-    state.currentPage = idx;
-    content.innerHTML = '';
-    if (idx === 0) {
-      const ch = state.chapters[state.currentChapter];
-      content.appendChild(el('h1', null, ch ? ch.title : ''));
-    }
-    state.pages[idx].forEach(n => content.appendChild(n));
-    content.scrollTop = 0;
-    updatePageFooter();
-  };
-  if (instant || idx === state.currentPage) { doShow(); return; }
-  const dir = idx > state.currentPage ? 1 : -1;
-  // v3.1: the 3D curl can be switched off in Settings ("Use 3D effect for
-  // page turning") — off means a plain slide (no leaf).
-  if (settings.page3d === false) { doShow(); return; }
+   revealing the new page underneath. Not a slide, not a fade.
+   v3.2: the leaf is built by buildTurnLeaf() (shared with the interactive
+   drag curl) from the turning PANEL — the visible page object, not the
+   full-bleed screen. In two-page mode the turning panel is the RIGHT page
+   going forward (it curls over the spine) and the LEFT page going back. */
+function buildTurnLeaf(turning, dir) {
   const wrap = $('#flipWrap');
-  // the turning leaf: a clone of the page as it looks right now.
-  // v3.1 FIX (v3 curl was invisible): the leaf is created WITHOUT the
-  // animation class, appended, then the class is added in a rAF AFTER a
-  // forced reflow. v3 created it with the class already on, so the browser
-  // batched the append + the content swap into one paint and the animation
-  // never visibly ran (measured rotation 0.05°).
   const leaf = el('div', 'turn-leaf');
   const front = el('div', 'leaf-face leaf-front');
-  const clone = content.cloneNode(true);
+  // the turning page, cloned: it fills the leaf, and the leaf sits exactly
+  // over the real panel, so the curl starts from the page as it looks now.
+  const clone = turning.cloneNode(true);
+  clone.querySelectorAll('[id]').forEach(n => n.removeAttribute('id'));
   clone.removeAttribute('id');
+  clone.style.position = 'absolute';
+  clone.style.left = '0'; clone.style.top = '0';
+  clone.style.width = '100%'; clone.style.height = '100%';
+  clone.style.margin = '0'; clone.style.transform = 'none';
   front.appendChild(clone);
   front.appendChild(el('div', 'leaf-shade'));
   // v3.1: the back of the turning page shows the chapter title, so the leaf
@@ -1452,11 +1692,73 @@ function showPage(idx, instant) {
   back.appendChild(el('div', null, ch ? ch.title : ''));
   leaf.appendChild(front);
   leaf.appendChild(back);
+  const wr = wrap.getBoundingClientRect(), r = turning.getBoundingClientRect();
+  leaf.style.left = (r.left - wr.left) + 'px';
+  leaf.style.top = (r.top - wr.top) + 'px';
+  leaf.style.width = r.width + 'px';
+  leaf.style.height = r.height + 'px';
+  leaf.style.right = 'auto'; leaf.style.bottom = 'auto';
   wrap.appendChild(leaf);
-  // keep the clone scrolled to the same spot as the real page
-  try { clone.scrollTop = content.scrollTop; } catch (e) {}
+  return leaf;
+}
+function fillPageContent(contentEl, pageIdx) {
+  contentEl.innerHTML = '';
+  if (pageIdx >= state.pages.length) return;
+  if (pageIdx === 0) {
+    // the chapter title, unless the page already opens with it — the
+    // chapter's first paragraph is often its own heading, and prepending
+    // the title again showed it twice on page 0.
+    const ch = state.chapters[state.currentChapter];
+    const first = state.pages[0] && state.pages[0][0];
+    const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
+    const alreadyTitled = first && ['H1', 'H2', 'H3'].indexOf(first.tagName) >= 0 && norm(first.textContent) === norm(ch ? ch.title : '');
+    if (!alreadyTitled) contentEl.appendChild(el('h1', null, ch ? ch.title : ''));
+  }
+  state.pages[pageIdx].forEach(n => contentEl.appendChild(n));
+  contentEl.scrollTop = 0;
+}
+/* Paint pages idx (and idx+1 in two-page mode) into the panels. Also
+   re-attaches narration-follow when the shown spread holds the sentence
+   being read, and rebuilds the speaking highlight on the newly shown page. */
+function paintPages(idx) {
+  const pv = perView();
+  const content = $('#pageContent'), content2 = $('#pageContent2');
+  state.currentPage = idx;
+  fillPageContent(content, idx);
+  if (pv === 2) fillPageContent(content2, idx + 1);
+  else content2.innerHTML = '';
+  updatePageFooter();
+  if (state.playing) {
+    const np = pageForSentence(state.sentenceIndex);
+    if (np >= idx && np < idx + pv) state.followNarration = true;
+  }
+  if (state.playing) buildSentenceSpans();
+}
+function showPage(idx, instant, manual) {
+  const content = $('#pageContent');
+  if (!state.pages.length) { content.style.display = ''; state.currentPage = 0; updatePageFooter(); return; }
+  const pv = perView();
+  idx = clamp(idx, 0, state.pages.length - 1);
+  if (pv === 2) idx = Math.floor(idx / 2) * 2; // a spread always starts on an even page
+  // v3.2: a MANUAL turn while read-aloud plays detaches the view from the
+  // narration — the view moves, the narration position does not. paintPages
+  // re-attaches if the landed spread holds the sentence being read.
+  if (manual && state.playing) state.followNarration = false;
+  if (instant || idx === state.currentPage) { paintPages(idx); return; }
+  const dir = idx > state.currentPage ? 1 : -1;
+  // v3.1: the 3D curl can be switched off in Settings ("Use 3D effect for
+  // page turning") — off means a plain swap (no leaf).
+  if (settings.page3d === false) { paintPages(idx); return; }
+  const turning = dir > 0 ? (pv === 2 ? $('#pageNext') : $('#pageCurrent')) : $('#pageCurrent');
+  const leaf = buildTurnLeaf(turning, dir);
+  if (pv === 2 && dir < 0) leaf.classList.add('spine-right'); // back over the spine, not the outer edge
   // swap the real content underneath (hidden by the leaf until it turns)
-  doShow();
+  paintPages(idx);
+  // v3.1 FIX (v3 curl was invisible): the leaf is created WITHOUT the
+  // animation class, appended, then the class is added in a rAF AFTER a
+  // forced reflow. v3 created it with the class already on, so the browser
+  // batched the append + the content swap into one paint and the animation
+  // never visibly ran (measured rotation 0.05°).
   void leaf.offsetWidth; // force a reflow so the leaf paints at rotateY(0) first
   requestAnimationFrame(() => {
     leaf.classList.add(dir > 0 ? 'fwd' : 'back');
@@ -1465,9 +1767,14 @@ function showPage(idx, instant) {
   });
 }
 function pageForSentence(si) {
-  if (settings.direction !== 'horizontal' || !state.pages.length) return 0;
+  if (!state.pages.length) return 0;
   const s = state.sentences[si];
   if (!s) return 0;
+  // v3.2: a paragraph split across pages lives in several chunk nodes — the
+  // sentence's page is the chunk whose text actually contains the sentence.
+  for (let i = 0; i < state.pages.length; i++) {
+    if (state.pages[i].some(n => Number(n.dataset.para) === s.paraIdx && (n.textContent || '').indexOf(s.text) >= 0)) return i;
+  }
   for (let i = 0; i < state.pages.length; i++) {
     if (state.pages[i].some(n => Number(n.dataset.para) === s.paraIdx)) return i;
   }
@@ -1485,15 +1792,17 @@ function chapterStartPage(i) {
 }
 function updatePageFooter() {
   const total = cachedPageTotal();
-  const cur = settings.direction === 'horizontal' ? (state.currentPage + 1) : currentScrollPage();
+  // v3.2: every mode is paginated now — the current page is always the
+  // painted page number, never a scroll fraction.
+  const cur = state.currentPage + 1;
   $('#pageNum').textContent = 'Page ' + cur + ' of ' + total;
   const ch = state.chapters[state.currentChapter];
   $('#chapterPos').textContent = ch ? ('Chapter ' + (state.currentChapter + 1) + ' of ' + state.chapters.length) : '';
   // v3.1 (Play Books footer): pages left in this chapter, % through the book,
   // and the bottom page slider.
   const chPages = (state.pages && state.pages.length) || 1;
-  const left = settings.direction === 'horizontal' ? Math.max(0, chPages - state.currentPage - 1) : 0;
-  const pl = $('#pagesLeft'); if (pl) pl.textContent = settings.direction === 'horizontal' ? (left + (left === 1 ? ' page left in chapter' : ' pages left in chapter')) : '';
+  const left = Math.max(0, chPages - state.currentPage - perView());
+  const pl = $('#pagesLeft'); if (pl) pl.textContent = left + (left === 1 ? ' page left in chapter' : ' pages left in chapter');
   const pct = total > 0 ? Math.round((cur / total) * 100) : 0;
   const pp = $('#pagePct'); if (pp) pp.textContent = pct + '%';
   const sl = $('#pageSlider');
@@ -1502,17 +1811,18 @@ function updatePageFooter() {
     if (document.activeElement !== sl) sl.value = cur;
   }
   const sn = $('#pageSliderNum'); if (sn) sn.textContent = cur + ' / ' + total;
-  // the on-page ‹ › buttons only make sense in horizontal-flip mode
+  // v3.2: every mode is paginated, so the on-page ‹ › buttons always apply.
   const pv = $('#btnPagePrev'), nx = $('#btnPageNext');
-  if (pv) pv.classList.toggle('hidden', settings.direction !== 'horizontal');
-  if (nx) nx.classList.toggle('hidden', settings.direction !== 'horizontal');
+  if (pv) pv.classList.remove('hidden');
+  if (nx) nx.classList.remove('hidden');
 }
 function pageTotalKey() {
   return [state.currentChapter, settings.direction, window.innerWidth, window.innerHeight, settings.fontSize, settings.lineSpacing, settings.font].join('|');
 }
 function cachedPageTotal() {
   if (!state.pageTotal || state.pageTotalKey !== pageTotalKey()) {
-    state.pageTotal = Math.max(1, settings.direction === 'horizontal' ? (state.totalPages || 1) : estimatePages());
+    // v3.2: every mode is paginated — the total is the packed page count.
+    state.pageTotal = Math.max(1, state.totalPages || 1);
     state.pageTotalKey = pageTotalKey();
   }
   return state.pageTotal;
@@ -1526,25 +1836,16 @@ function scheduleSettle() {
 function settlePageTotal() {
   const content = $('#pageContent');
   if (!content || !state.meta) return;
-  const frac = (content.scrollHeight > content.clientHeight) ? content.scrollTop / (content.scrollHeight - content.clientHeight) : 0;
+  // v3.2: no scroll position to preserve — pages are discrete screenfuls.
   invalidatePageTotal();
   cachedPageTotal();
-  if (settings.direction === 'vertical' && content.scrollHeight > content.clientHeight) {
-    content.scrollTop = frac * (content.scrollHeight - content.clientHeight);
-  }
   updatePageFooter();
 }
 function estimatePages() {
-  const content = $('#pageContent');
-  if (!content || !content.scrollHeight) return 1;
-  return Math.max(1, Math.ceil(content.scrollHeight / Math.max(1, content.clientHeight)));
+  return Math.max(1, state.totalPages || 1);
 }
 function currentScrollPage() {
-  const content = $('#pageContent');
-  if (!content || !content.clientHeight) return 1;
-  const total = cachedPageTotal();
-  if (content.scrollTop + content.clientHeight >= content.scrollHeight - 2) return total;
-  return clamp(Math.floor(content.scrollTop / content.clientHeight) + 1, 1, total);
+  return state.currentPage + 1;
 }
 function updateChapterList() {
   const ul = $('#chapterList');
@@ -1637,11 +1938,16 @@ function buildSentenceSpans() {
   const s = state.sentences[state.sentenceIndex];
   if (!s) return;
   const nodes = paraElements();
-  const node = nodes.find(n => Number(n.dataset.para) === s.paraIdx);
+  // v3.2: a paragraph split across pages lives in several chunk nodes — the
+  // sentence is wrapped in the chunk whose text actually contains it.
+  const node = nodes.find(n => Number(n.dataset.para) === s.paraIdx && (n.textContent || '').indexOf(s.text) >= 0)
+    || nodes.find(n => Number(n.dataset.para) === s.paraIdx);
   if (!node) return;
   const para = state.paragraphs[s.paraIdx];
   if (!para) return;
-  const ptext = para.text;
+  // v3.2: for a chunk, wrap within the CHUNK's own text — using the full
+  // paragraph text here would re-expand the chunk to the whole paragraph.
+  const ptext = (node.dataset.chunk != null) ? (node._chunkText || node.textContent) : para.text;
   const start = ptext.indexOf(s.text);
   if (start < 0) return;
   const before = ptext.slice(0, start), after = ptext.slice(start + s.text.length);
@@ -1666,7 +1972,8 @@ function clearSentenceSpans() {
     const sp = n.querySelector('.sentence');
     if (sp) {
       const p = state.paragraphs[Number(n.dataset.para)];
-      n.textContent = p ? p.text : n.textContent;
+      // v3.2: a chunk restores its OWN text, never the full paragraph.
+      n.textContent = n._chunkText || (p ? p.text : n.textContent);
       delete n.dataset.built;
     }
   });
@@ -1674,12 +1981,13 @@ function clearSentenceSpans() {
 function scrollToSentence() {
   const s = state.sentences[state.sentenceIndex];
   if (!s) return;
-  if (settings.direction === 'horizontal') {
-    const pg = pageForSentence(state.sentenceIndex);
-    if (pg !== state.currentPage) showPage(pg);
-  }
-  const node = paraElements().find(n => Number(n.dataset.para) === s.paraIdx);
-  if (node && settings.direction === 'vertical') node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  // v3.2: if the user turned pages manually to peek, the view stays where
+  // they put it — the narration keeps going from its own sentence and the
+  // view only follows again once the user turns back to the narration page
+  // (paintPages re-attaches) or resumes playback.
+  if (!state.followNarration) return;
+  const pg = pageForSentence(state.sentenceIndex);
+  if (pg < state.currentPage || pg >= state.currentPage + perView()) showPage(pg);
 }
 
 /* ---------------- narration engine (v3) ---------------- */
@@ -1747,7 +2055,6 @@ async function speakCurrent() {
     speakCurrent();
     return;
   }
-  NEURAL.consecFail = 0;
   if (!narrAlive(myNarr)) return;
   if (res.empty) {
     clearSentenceSpans();
@@ -1776,13 +2083,47 @@ async function speakCurrent() {
   }
   state.speaking = false;
   if (!narrAlive(myNarr)) return;
-  if (!ok) return;
+  if (!ok) {
+    // v3.2: a sentence that will not play must NEVER halt narration silently
+    // with the Pause icon stuck and the counter frozen (v3.1 live failure:
+    // 0/26 forever, no error, no sound — for Google AND Kokoro, the play
+    // step is shared). Skip the line and continue; stop only after 3 in a
+    // row, with an honest message. Same rule as a synthesis failure (F6).
+    console.warn('Skipping sentence that would not play', state.sentenceIndex);
+    NEURAL.consecFail = (NEURAL.consecFail || 0) + 1;
+    if (NEURAL.consecFail >= MAX_CONSEC_FAIL) {
+      stopNarration(true);
+      toast('Voice stopped — the audio would not play. Check your connection and try again.');
+      return;
+    }
+    clearSentenceSpans();
+    state.sentenceIndex++;
+    savePosition();
+    if (state.sentenceIndex >= state.sentences.length) { advanceChapterOrStop(); return; }
+    speakCurrent();
+    return;
+  }
+  NEURAL.consecFail = 0; // a sentence that actually played breaks the failure chain
   const pause = pauseAfterSentence();
   clearSentenceSpans();
   state.sentenceIndex++;
   savePosition();
   if (state.sentenceIndex >= state.sentences.length) { advanceChapterOrStop(); return; }
   pauseTimer = setTimeout(() => { buildSentenceSpans(); scrollToSentence(); speakCurrent(); }, pause);
+}
+/* v3.2: start the first buffered Google chunk INSIDE the Play tap (a user
+   gesture), so autoplay policy can never reject the later async play() call.
+   If nothing is buffered yet this is a harmless no-op — the async path
+   still races play() and skips on failure. (Kokoro has no pre-buffered
+   element to unlock; its play() is covered by the same race + skip.) */
+function gtUnlock() {
+  if (!state.meta || langCode(state.meta.language) !== 'te') return;
+  const key = gtSentenceKey(state.currentChapter, state.sentenceIndex) + '::c0';
+  const slot = GT_POOL.find(s => s.key === key);
+  if (!slot) return;
+  const a = slot.el;
+  if (a.readyState < 3 || !a.paused) return;
+  try { const p = a.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
 }
 /* Play/Pause are synchronous and instant — they never await a download or a
    synthesis. Pause stops the audio at once and cancels pending work. */
@@ -1792,13 +2133,16 @@ function playNarration() {
   NEURAL.narrationToken++;
   NEURAL.consecFail = 0;
   state.playing = true;
+  state.followNarration = true; // resuming re-attaches the view to the narration
   $('#btnPlay').textContent = '⏸';
   $('#btnPlayBelow').textContent = '⏸ Pause';
   startSleepTimer();
+  gtUnlock();
   speakCurrent();
 }
 function pauseNarration() {
   state.playing = false;
+  state.followNarration = true;
   clearTimeout(pauseTimer);
   stopNeural();
   state.speaking = false;
@@ -1809,6 +2153,7 @@ function pauseNarration() {
 }
 function stopNarration(resetBtn) {
   state.playing = false;
+  state.followNarration = true;
   clearTimeout(pauseTimer);
   stopNeural();
   state.speaking = false;
@@ -1846,14 +2191,14 @@ function skipSeconds(sec) {
   const dir = sec < 0 ? -1 : 1;
   state.sentenceIndex = clamp(state.sentenceIndex + dir * n, 0, Math.max(0, state.sentences.length - 1));
   clearSentenceSpans();
-  if (state.playing) { stopNeural(); state.speaking = false; clearTimeout(pauseTimer); buildSentenceSpans(); scrollToSentence(); speakCurrent(); }
+  if (state.playing) { state.followNarration = true; stopNeural(); state.speaking = false; clearTimeout(pauseTimer); buildSentenceSpans(); scrollToSentence(); speakCurrent(); }
   else { buildSentenceSpans(); scrollToSentence(); }
   savePosition();
 }
 function nextSentence() {
   if (state.sentenceIndex < state.sentences.length - 1) {
     clearSentenceSpans(); state.sentenceIndex++;
-    if (state.playing) { stopNeural(); state.speaking = false; clearTimeout(pauseTimer); buildSentenceSpans(); scrollToSentence(); speakCurrent(); }
+    if (state.playing) { state.followNarration = true; stopNeural(); state.speaking = false; clearTimeout(pauseTimer); buildSentenceSpans(); scrollToSentence(); speakCurrent(); }
     else { buildSentenceSpans(); scrollToSentence(); }
   } else advanceChapterOrStop();
   savePosition();
@@ -1861,7 +2206,7 @@ function nextSentence() {
 function prevSentence() {
   clearSentenceSpans();
   state.sentenceIndex = Math.max(0, state.sentenceIndex - 1);
-  if (state.playing) { stopNeural(); state.speaking = false; clearTimeout(pauseTimer); buildSentenceSpans(); scrollToSentence(); speakCurrent(); }
+  if (state.playing) { state.followNarration = true; stopNeural(); state.speaking = false; clearTimeout(pauseTimer); buildSentenceSpans(); scrollToSentence(); speakCurrent(); }
   else { buildSentenceSpans(); scrollToSentence(); }
   savePosition();
 }
@@ -1911,6 +2256,7 @@ async function playFromStart() {
   state.sentences = openLines.concat(state.sentences);
   state.sentenceIndex = 0;
   state.playing = true;
+  state.followNarration = true;
   $('#btnPlay').textContent = '⏸';
   startSleepTimer();
   speakCurrent();
@@ -2039,8 +2385,8 @@ function applyFont() {
   const lsp = $('#lineSpacingPct'); if (lsp) lsp.textContent = [100, 120, 140][clamp(settings.lineSpacing - 1, 0, 2)] + '%';
   const al = $('#setAlign'); if (al) al.value = settings.align || 'default';
   // text alignment: default (inherit) / left / justify
-  const pc = $('#pageContent');
-  if (pc) pc.style.textAlign = settings.align === 'justify' ? 'justify' : settings.align === 'left' ? 'left' : '';
+  const alignVal = settings.align === 'justify' ? 'justify' : settings.align === 'left' ? 'left' : '';
+  ['#pageContent', '#pageContent2'].forEach(sel => { const pc = $(sel); if (pc) pc.style.textAlign = alignVal; });
 }
 /* v3.1: reading brightness + night light (Lighting tab). The brightness
    overlay dims the page; the night-light overlay warms it. Both are cheap
@@ -2061,7 +2407,7 @@ function setDirection(dir) {
   saveSettings(); savePerBookSettings();
   const d = $('#setDirection'); if (d) d.value = settings.direction;
   renderChapter();
-  toast(dir === 'horizontal' ? 'Horizontal page flip' : 'Vertical scroll');
+  toast(dir === 'horizontal' ? 'Horizontal page flip' : 'Vertical pages');
 }
 
 /* ---------------- screens ---------------- */
@@ -2073,6 +2419,11 @@ function showScreen(name) {
 function openReader() {
   showScreen('reader');
   document.body.classList.remove('focus-mode');
+  // v3.2: paginate once the reader is actually visible — the open flow
+  // paginates while the reader is still hidden (clientHeight 0), so only
+  // now are the measurements real. Idempotent: nodes are re-attached from
+  // state.pageNodes and repacked.
+  if (state.meta) paginate();
 }
 function closeDrawer() { $('#drawer').classList.remove('open'); $('#drawerScrim').classList.add('hidden'); }
 function openDrawer() { $('#drawer').classList.add('open'); $('#drawerScrim').classList.remove('hidden'); }
@@ -2115,7 +2466,8 @@ function renderContinueCard() {
   $('#btnContinue').onclick = () => reopenBook(last.id);
 }
 async function reopenBook(id) {
-  const rec = await idbGet('books', id).catch(() => null);
+  // v3.2 (F24): IndexedDB first, Cache API fallback — whichever holds the file.
+  const rec = await loadBookFile(id);
   if (!rec || !rec.data) { toast('Book file is no longer stored — please open it again'); return; }
   const entry = library.find(b => b.id === id);
   showLoad('Opening book…', 20);
@@ -2196,14 +2548,17 @@ async function handleFile(file) {
     // reader opens. The v3 fire-and-forget put silently swallowed failures,
     // so "Continue" later found no file. Now we AWAIT it and READ IT BACK;
     // if it fails we tell the user plainly instead of pretending it saved.
+    // v3.2 (F24): if IndexedDB itself cannot store the book, saveBookFile
+    // falls back to the Cache API and says which store held it — the error
+    // name is shown, never swallowed into a generic message.
     setLoadProgress(80, 'Saving the book for later…');
-    try {
-      await idbPut('books', { id: meta.id, type: isPdf ? 'pdf' : 'epub', data: buf, title: meta.title });
-      const check = await idbGet('books', meta.id);
-      if (!check || !check.data) throw new Error('save did not stick');
-    } catch (e) {
-      console.error('book persist failed', e);
-      toast('Book opened, but it could not be saved — Continue may not work. Check storage permission.');
+    const saved = await saveBookFile(meta, isPdf, buf);
+    if (!saved.ok) {
+      console.error('book persist failed', saved.error, saved.cacheError);
+      toast('Book opened, but it could not be saved — Continue may not work. (' + (saved.error && saved.error.name ? saved.error.name : 'storage error') + ')');
+    } else if (saved.via === 'cache') {
+      console.warn('book saved to offline cache; IndexedDB failed:', saved.idbError);
+      toast('Book saved to offline cache — Continue will work.');
     }
     try { localStorage.removeItem('epubreader.pos.' + meta.id); } catch (e) {}
     try { localStorage.removeItem('epubreader.auto.' + meta.id); } catch (e) {}
@@ -2296,7 +2651,9 @@ $('#selectionMenu') && $('#selectionMenu').addEventListener('click', ev => {
 });
 
 /* ---------------- tap-to-hear: tap a WORD to hear it, tap a paragraph to narrate from there ---------------- */
-$('#pageContent').addEventListener('click', ev => {
+const pageClickHandler = ev => {
+  // v3.2: a drag-curl release is not a tap — never speak a word for it.
+  if (suppressClick) return;
   const wEl = ev.target.closest('.w');
   if (wEl && wEl.textContent) {
     const lang = state.meta ? state.meta.language : 'en';
@@ -2315,7 +2672,10 @@ $('#pageContent').addEventListener('click', ev => {
   state.sentenceIndex = idx;
   if (!state.playing) playNarration();
   else { stopNeural(); state.speaking = false; clearTimeout(pauseTimer); buildSentenceSpans(); scrollToSentence(); speakCurrent(); }
-});
+};
+// v3.2: tap-to-hear works on BOTH page panels in two-page mode.
+$('#pageContent').addEventListener('click', pageClickHandler);
+$('#pageContent2').addEventListener('click', pageClickHandler);
 
 /* ---------------- backup / restore / storage / voices ---------------- */
 function backupLibrary() {
@@ -2408,6 +2768,14 @@ function openMoodMenu() {
 
 /* ---------------- wiring ---------------- */
 function wire() {
+  // v3.2: re-paginate whenever the page area itself changes size (the
+  // download bar showing/hiding is the common case — a window resize
+  // does NOT fire for it, so the resize handler alone misses it).
+  if (!flipRO && 'ResizeObserver' in window) {
+    flipRO = new ResizeObserver(onFlipResize);
+    const fw = document.querySelector('#flipWrap');
+    if (fw) flipRO.observe(fw);
+  }
   $('#btnOpenBook').onclick = () => $('#fileInput').click();
   $('#fileInput').addEventListener('change', ev => { handleFile(ev.target.files[0]); ev.target.value = ''; });
   $('#restoreInput').addEventListener('change', ev => { if (ev.target.files[0]) restoreLibrary(ev.target.files[0]); ev.target.value = ''; });
@@ -2420,7 +2788,7 @@ function wire() {
   $('#btnFwd15').onclick = () => skipSeconds(15);
   $('#btnBookmark').onclick = () => addBookmark(false);
   $('#btnSleep').onclick = () => $('#sleepMenu').classList.toggle('hidden');
-  $('#btnChapters').onclick = openDrawer;
+  $('#btnChapters').onclick = () => { const d = $('#drawer'); d.classList.contains('open') ? closeDrawer() : openDrawer(); };
   $('#btnDrawerClose').onclick = closeDrawer;
   $('#drawerScrim').onclick = closeDrawer;
   $('#btnTheme').onclick = cycleTheme;
@@ -2457,13 +2825,7 @@ function wire() {
     if (!n || n < 1) return;
     const total = cachedPageTotal();
     const page = clamp(n, 1, total);
-    if (settings.direction === 'horizontal') showPage(page - 1);
-    else {
-      const c = $('#pageContent');
-      const maxTop = Math.max(0, c.scrollHeight - c.clientHeight);
-      c.scrollTo({ top: Math.min((page - 1) * c.clientHeight, maxTop), behavior: 'smooth' });
-      setTimeout(updatePageFooter, 350);
-    }
+    showPage(page - 1, false, true);
     updatePageFooter();
   };
   let footerRaf = null;
@@ -2493,6 +2855,8 @@ function wire() {
   $('#setNightLight').addEventListener('change', ev => { settings.nightLight = ev.target.checked; saveSettings(); applyLighting(); });
   // v3.1: reading toggles (Lighting tab).
   $('#setPage3d').addEventListener('change', ev => { settings.page3d = ev.target.checked; saveSettings(); });
+  // v3.2: two-page spread (Text tab) — one or two pages on wide screens.
+  $('#setTwoPage').addEventListener('change', ev => { settings.twoPage = ev.target.checked; saveSettings(); savePerBookSettings(); if (state.meta) paginate(); });
   $('#setVolumeKeys').addEventListener('change', ev => { settings.volumeKeys = ev.target.checked; saveSettings(); });
   $('#setAutoReadAloud').addEventListener('change', ev => { settings.autoReadAloud = ev.target.checked; saveSettings(); });
   $('#setDefPreview').addEventListener('change', ev => { settings.defPreview = ev.target.checked; saveSettings(); });
@@ -2503,35 +2867,115 @@ function wire() {
   $('#setLargeText').addEventListener('change', ev => { settings.largeText = ev.target.checked; saveSettings(); applyFont(); });
   $('#setHighContrast').addEventListener('change', ev => { settings.highContrast = ev.target.checked; saveSettings(); applyFont(); });
   document.addEventListener('keydown', ev => {
+    // v3.2 (F25): Escape closes the Contents drawer (and any open sheet/menu)
+    // — including from inside the drawer's search box, so this runs before
+    // the input-field early return below.
+    if (ev.key === 'Escape') { closeDrawer(); $('#settingsSheet').classList.add('hidden'); const rm = $('#readerMenu'); if (rm) rm.classList.add('hidden'); return; }
     if ($('#reader').classList.contains('hidden')) return;
     if (ev.target.tagName === 'INPUT' || ev.target.tagName === 'SELECT' || ev.target.tagName === 'TEXTAREA') return;
     if (ev.code === 'Space') { ev.preventDefault(); playNarration(); }
-    // v3.1: in horizontal-flip mode the arrow keys turn PAGES (the page is
-    // the unit); in vertical mode they move sentences. Volume keys turn
-    // pages too when the setting is on.
-    else if (ev.key === 'ArrowRight') { if (settings.direction === 'horizontal') showPage(state.currentPage + 1); else nextSentence(); }
-    else if (ev.key === 'ArrowLeft') { if (settings.direction === 'horizontal') showPage(state.currentPage - 1); else prevSentence(); }
-    else if ((ev.key === 'VolumeUp' || ev.key === 'VolumeDown') && settings.volumeKeys) { ev.preventDefault(); showPage(state.currentPage + (ev.key === 'VolumeUp' ? 1 : -1)); }
+    // v3.2: in every mode the arrow keys turn PAGES (the page is the unit —
+    // vertical mode is paged too now, no scrolling). Volume keys turn pages
+    // too when the setting is on.
+    else if (ev.key === 'ArrowRight') { showPage(state.currentPage + pageStep(), false, true); }
+    else if (ev.key === 'ArrowLeft') { showPage(state.currentPage - pageStep(), false, true); }
+    else if ((ev.key === 'VolumeUp' || ev.key === 'VolumeDown') && settings.volumeKeys) { ev.preventDefault(); showPage(state.currentPage + (ev.key === 'VolumeUp' ? pageStep() : -pageStep()), false, true); }
     else if (ev.key === 'b' || ev.key === 'B') addBookmark(false);
     else if (ev.key === 'm' || ev.key === 'M') openMoodMenu();
   });
-  // v3.1 swipe: pointer events (touch + mouse drag) on the page. v3 used
-  // touchstart/touchend only and the swipe did nothing on the live test.
-  // touch-action: pan-y (CSS) lets horizontal drags reach us instead of the
-  // browser treating them as a scroll.
-  let swipeX = null, swipeY = null;
+  // v3.2 — interactive drag-driven curl (Play Books): the page PEELS in real
+  // time, following the finger/mouse during the drag — not a canned animation
+  // after the swipe ends. On release past ~1/3 of the page (or a fast flick)
+  // the turn completes; otherwise the leaf springs back to the current page.
+  // A drag that ends in a tap must not trigger tap-to-hear (suppressClick).
+  let swipeX = null, swipeY = null, swipeT0 = 0;
+  let drag = null; // {dir, leaf, startX, panelW, target, origin, startAngle, swapped, progress}
   const fw = $('#flipWrap');
-  fw.addEventListener('pointerdown', ev => { swipeX = ev.clientX; swipeY = ev.clientY; });
-  fw.addEventListener('pointerup', ev => {
-    if (swipeX == null || settings.direction !== 'horizontal') { swipeX = null; return; }
-    const dx = ev.clientX - swipeX, dy = ev.clientY - swipeY;
-    swipeX = null; swipeY = null;
-    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.4) {
-      if (dx < 0) showPage(state.currentPage + 1);
-      else showPage(state.currentPage - 1);
-    }
+  fw.addEventListener('pointerdown', ev => {
+    swipeX = ev.clientX; swipeY = ev.clientY; swipeT0 = ev.timeStamp || 0; drag = null;
+    try { fw.setPointerCapture(ev.pointerId); } catch (e) {}
   });
-  fw.addEventListener('pointercancel', () => { swipeX = null; swipeY = null; });
+  fw.addEventListener('pointermove', ev => {
+    if (swipeX == null) return;
+    const dx = ev.clientX - swipeX, dy = ev.clientY - swipeY;
+    if (!drag) {
+      if (settings.direction !== 'horizontal' || Math.abs(dx) < 14 || Math.abs(dx) < Math.abs(dy) * 1.3) return;
+      const dir = dx < 0 ? 1 : -1;
+      const target = state.currentPage + dir * pageStep();
+      if (!state.pages.length || target < 0 || target >= state.pages.length) { drag = { dead: true }; return; }
+      if (settings.page3d === false) { drag = { dead: true }; return; } // 3D off: plain swipe on release
+      const turning = dir > 0 ? (perView() === 2 ? $('#pageNext') : $('#pageCurrent')) : $('#pageCurrent');
+      const leaf = buildTurnLeaf(turning, dir);
+      if (perView() === 2 && dir < 0) leaf.classList.add('spine-right');
+      drag = { dir, leaf, startX: swipeX, panelW: Math.max(200, turning.clientWidth || 300), target, origin: state.currentPage, startAngle: dir > 0 ? 0 : -180, swapped: false, progress: 0 };
+      leaf.style.transform = 'rotateY(' + drag.startAngle + 'deg)';
+      return;
+    }
+    if (drag.dead) return;
+    const dx2 = ev.clientX - drag.startX;
+    const progress = clamp(Math.abs(dx2) / drag.panelW, 0, 1);
+    const angle = drag.dir > 0 ? -180 * progress : -180 * (1 - progress);
+    const pinch = 1 - 0.06 * Math.sin(progress * Math.PI); // paper bends a little mid-turn
+    drag.leaf.style.transform = 'rotateY(' + angle.toFixed(1) + 'deg) scaleX(' + pinch.toFixed(3) + ')';
+    drag.progress = progress;
+    // the new page is revealed UNDER the leaf as it curls away; if the user
+    // drags back, the old page comes back under it.
+    if (progress > 0.06 && !drag.swapped) { paintPages(drag.target); drag.swapped = true; }
+    else if (progress <= 0.06 && drag.swapped) { paintPages(drag.origin); drag.swapped = false; }
+  });
+  const endDrag = ev => {
+    if (swipeX == null && !drag) return;
+    const dx = swipeX == null ? 0 : ev.clientX - swipeX;
+    const dy = swipeY == null ? 0 : ev.clientY - swipeY;
+    if (drag && drag.leaf) {
+      suppressClick = true;
+      setTimeout(() => { suppressClick = false; }, 350);
+      const dt = Math.max(1, (ev.timeStamp || 0) - (swipeT0 || ev.timeStamp || 0));
+      const vx = Math.abs(dx) / dt; // px per ms
+      const complete = (drag.progress || 0) >= 0.33 || ((drag.progress || 0) >= 0.12 && vx > 0.6);
+      const endAngle = drag.dir > 0 ? (complete ? -180 : 0) : (complete ? 0 : -180);
+      if (complete) {
+        // a completed manual turn detaches the view from the narration —
+        // set it BEFORE painting, so paintPages re-attaches if the landed
+        // spread holds the sentence being read. The explicit re-check after
+        // is for the mid-drag paint (progress > 0.06 already painted the
+        // target before the detach was set).
+        if (state.playing) state.followNarration = false;
+        if (!drag.swapped) paintPages(drag.target);
+        if (state.playing) { const np = pageForSentence(state.sentenceIndex); if (np >= state.currentPage && np < state.currentPage + perView()) state.followNarration = true; }
+      } else if (drag.swapped) {
+        paintPages(drag.origin);
+      }
+      const leaf = drag.leaf;
+      leaf.classList.add('settling'); // CSS transition animates to the end angle
+      leaf.style.transform = 'rotateY(' + endAngle + 'deg)';
+      setTimeout(() => leaf.remove(), 320);
+      drag = null; swipeX = null; swipeY = null;
+      return;
+    }
+    drag = null;
+    // no interactive drag: a quick flick still turns the page (v3.1 swipe).
+    if (swipeX != null && settings.direction === 'horizontal' && Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.4) {
+      if (dx < 0) showPage(state.currentPage + pageStep(), false, true);
+      else showPage(state.currentPage - pageStep(), false, true);
+    } else if (swipeX != null && settings.direction !== 'horizontal' && Math.abs(dy) > 50 && Math.abs(dy) > Math.abs(dx) * 1.4) {
+      // v3.2: vertical mode is paged too — a vertical swipe turns the page.
+      if (dy < 0) showPage(state.currentPage + 1, false, true);
+      else showPage(state.currentPage - 1, false, true);
+    }
+    swipeX = null; swipeY = null;
+  };
+  fw.addEventListener('pointerup', endDrag);
+  fw.addEventListener('pointercancel', () => {
+    if (drag && drag.leaf) {
+      const leaf = drag.leaf;
+      if (drag.swapped) paintPages(drag.origin);
+      leaf.classList.add('settling');
+      leaf.style.transform = 'rotateY(' + drag.startAngle + 'deg)';
+      setTimeout(() => leaf.remove(), 320);
+    }
+    drag = null; swipeX = null; swipeY = null;
+  });
   window.addEventListener('resize', () => { if (state.meta && settings.direction === 'horizontal') paginate(); if (state.meta) scheduleSettle(); });
 
   /* ================= v3.1 wiring ================= */
@@ -2562,38 +3006,36 @@ function wire() {
   $('#menuHelp').onclick = () => { $('#readerMenu').classList.add('hidden'); toast('Swipe or use ‹ › to turn pages. Tap a word to hear it. Touch & hold text to add a note.', 4000); };
   $('#menuFeedback').onclick = () => { $('#readerMenu').classList.add('hidden'); toast('Thanks — tell Ira what to improve.'); };
   // On-page ‹ › turn buttons.
-  $('#btnPagePrev').onclick = () => showPage(state.currentPage - 1);
-  $('#btnPageNext').onclick = () => showPage(state.currentPage + 1);
+  $('#btnPagePrev').onclick = () => showPage(state.currentPage - pageStep(), false, true);
+  $('#btnPageNext').onclick = () => showPage(state.currentPage + pageStep(), false, true);
   // Bottom page slider (Play Books footer): drag to jump to a page.
   $('#pageSlider').addEventListener('input', ev => {
     const total = cachedPageTotal();
     const page = clamp(parseInt(ev.target.value, 10) || 1, 1, Math.max(1, total));
-    if (settings.direction === 'horizontal') showPage(page - 1, true);
-    else {
-      const c = $('#pageContent');
-      const maxTop = Math.max(0, c.scrollHeight - c.clientHeight);
-      c.scrollTo({ top: Math.min((page - 1) * c.clientHeight, maxTop), behavior: 'smooth' });
-      setTimeout(updatePageFooter, 350);
-    }
+    showPage(page - 1, true, true);
   });
   // New-version banner reload.
   $('#btnUpdateReload').onclick = () => location.reload();
   // Long-press (touch & hold) on reading text adds a NOTE (Play Books Notes
   // empty state). A short tap still speaks the word (tap-to-hear).
   let lpTimer = null, lpFired = false;
-  const pcEl = $('#pageContent');
-  pcEl.addEventListener('pointerdown', ev => {
-    lpFired = false;
-    lpTimer = setTimeout(() => {
-      lpFired = true;
-      const s = state.sentences[state.sentenceIndex];
-      const cur = s ? s.text : '';
-      const note = window.prompt('Add a note about this passage:\n\n“' + cur.slice(0, 120) + '”');
-      if (note) addNote(note);
-    }, 650);
+  // v3.2: long-press notes work on BOTH page panels in two-page mode.
+  ['#pageContent', '#pageContent2'].forEach(sel => {
+    const pcEl = $(sel);
+    if (!pcEl) return;
+    pcEl.addEventListener('pointerdown', ev => {
+      lpFired = false;
+      lpTimer = setTimeout(() => {
+        lpFired = true;
+        const s = state.sentences[state.sentenceIndex];
+        const cur = s ? s.text : '';
+        const note = window.prompt('Add a note about this passage:\n\n“' + cur.slice(0, 120) + '”');
+        if (note) addNote(note);
+      }, 650);
+    });
+    ['pointerup', 'pointermove', 'pointercancel', 'pointerleave'].forEach(t =>
+      pcEl.addEventListener(t, () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } }));
   });
-  ['pointerup', 'pointermove', 'pointercancel', 'pointerleave'].forEach(t =>
-    pcEl.addEventListener(t, () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } }));
   // Definition preview (Lighting tab): when on, selecting text shows the
   // definition automatically instead of waiting for the Define tap.
   document.addEventListener('selectionchange', () => {
@@ -2671,6 +3113,7 @@ function init() {
   const sb = $('#setBrightness'); if (sb) sb.value = settings.brightness || 100;
   const snl = $('#setNightLight'); if (snl) snl.checked = !!settings.nightLight;
   const sp3 = $('#setPage3d'); if (sp3) sp3.checked = settings.page3d !== false;
+  const s2p = $('#setTwoPage'); if (s2p) s2p.checked = settings.twoPage !== false;
   const svk = $('#setVolumeKeys'); if (svk) svk.checked = !!settings.volumeKeys;
   const sar = $('#setAutoReadAloud'); if (sar) sar.checked = !!settings.autoReadAloud;
   const sdp = $('#setDefPreview'); if (sdp) sdp.checked = settings.defPreview !== false;

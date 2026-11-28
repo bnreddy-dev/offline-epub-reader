@@ -19,6 +19,7 @@
   --highlight: #ffe9a8; --speak: #ffdf8a; --word: #c07f1f;
   --header-bg: #fbf5e4; --shadow: rgba(70,45,10,.14);
   --paper-shadow: 0 1px 2px rgba(70,45,10,.08), 0 8px 28px rgba(70,45,10,.12);
+  --desk: #c7b489; /* v3.2: the "desk" around the page — clearly darker than the paper */
 }
 /* Theme: white — clean, airy, refined blue accent */
 [data-theme="white"] {
@@ -28,6 +29,7 @@
   --highlight: #fff3a3; --speak: #ffe98a; --word: #155e9e;
   --header-bg: #ffffff; --shadow: rgba(0,0,0,.10);
   --paper-shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 28px rgba(0,0,0,.10);
+  --desk: #d2d2cf; /* v3.2: the "desk" around the page */
 }
 /* Theme: dark — warm charcoal, warm light text (never black font on dark bg) */
 [data-theme="dark"] {
@@ -37,9 +39,15 @@
   --highlight: #4d3d17; --speak: #6b5518; --word: #e0a458;
   --header-bg: #1d1813; --shadow: rgba(0,0,0,.5);
   --paper-shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 28px rgba(0,0,0,.45);
+  --desk: #0c0908; /* v3.2: the "desk" around the page */
 }
 html, body { height: 100%; }
 body {
+  margin: 0; /* v3.2: the global * reset at the top of this file is dead
+     (a malformed comment swallows it — see FAILURE_LOG F26), so the UA
+     8px body margin survived and pushed the audio bar 8px below the
+     viewport on a phone. Reset it here, explicitly, and nowhere else:
+     the rest of the app was tuned with the dead reset and stays as is. */
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Noto Sans Telugu", sans-serif;
   background: var(--bg); color: var(--text);
   font-size: 16px; line-height: 1.55;
@@ -107,7 +115,12 @@ button:active { transform: scale(.97); }
 .mood-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); display: inline-block; }
 .mini-btn { border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; font-size: 13px; background: var(--surface); min-height: 32px; }
 .reader-body { flex: 1; display: flex; overflow: hidden; position: relative; }
-.drawer { width: 288px; max-width: 84vw; background: var(--surface); border-right: 1px solid var(--border); overflow-y: auto; padding: 14px; flex-shrink: 0; z-index: 40; }
+/* v3.2 (F25): the drawer is an OVERLAY on every width — hidden by default
+   (translated off-screen), shown only with .open. v3.1 hid it only under
+   760px, so on a laptop it was a permanent sidebar that no close control
+   (✕, toggle, Escape) could dismiss. */
+.drawer { width: 288px; max-width: 84vw; background: var(--surface); border-right: 1px solid var(--border); overflow-y: auto; padding: 14px; flex-shrink: 0; z-index: 40; position: absolute; left: 0; top: 0; bottom: 0; transform: translateX(-105%); transition: transform .2s ease; box-shadow: 4px 0 18px rgba(0,0,0,.12); }
+.drawer.open { transform: translateX(0); }
 .drawer-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-weight: 700; }
 .drawer-search input, .drawer-goto input { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--text); font: inherit; }
 .drawer-goto { display: flex; gap: 8px; margin: 10px 0; }
@@ -122,38 +135,50 @@ button:active { transform: scale(.97); }
 .drawer-section ul li { padding: 8px 4px; font-size: 13px; border-bottom: 1px solid var(--border); cursor: pointer; }
 .cache-info { margin-top: 16px; font-size: 12px; color: var(--muted); }
 .drawer-scrim { position: absolute; inset: 0; background: rgba(0,0,0,.35); z-index: 35; }
-@media (max-width: 760px) {
-  .drawer { position: absolute; left: 0; top: 0; bottom: 0; transform: translateX(-105%); transition: transform .2s ease; }
-  .drawer.open { transform: translateX(0); }
-}
 
 /* ---------- Page area ---------- */
 .page-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
-/* v3.1 — FULL-BLEED page (Play Books reference): the paper fills the whole
-   reading area edge-to-edge. NO box/card border, NO rounded card, NO shadow
-   box. The page IS the screen: warm paper background, generous text margins,
-   clean serif text. The paper colour lives on .flip-wrap/.page so there is
-   no visible boundary; .page-content is transparent and only constrains the
-   text column for readability. */
+/* v3.2 — the page is a VISIBLE OBJECT (F22), not full-bleed: the paper is
+   clearly distinct from the surrounding "desk", with clear edges, generous
+   margins and a subtle shadow — like a real book page. Single page centred
+   (max 680px); two-page mode shows two pages side by side like an open
+   book, with a spine gutter and a faint spine edge on each inner side.
+   The page content NEVER scrolls: paginate() splits the chapter into
+   screenfuls, one per page, and overflow goes to the next page. */
 /* v3.1: touch-action pan-y lets horizontal drags reach the pointer swipe
    handler instead of the browser swallowing them as a scroll. */
-.flip-wrap { flex: 1; overflow: hidden; position: relative; perspective: 1400px; background: var(--surface); touch-action: pan-y; }
-.page { position: absolute; inset: 0; overflow: hidden; background: var(--surface); transform-origin: left center; backface-visibility: hidden; }
+.flip-wrap { flex: 1; overflow: hidden; position: relative; perspective: 1400px; background: var(--desk); touch-action: pan-y; }
+.page { position: absolute; top: 12px; bottom: 12px; left: 50%; width: min(680px, calc(100% - 24px)); transform: translateX(-50%); overflow: hidden; background: var(--surface); border: 1px solid rgba(0,0,0,.08); border-radius: 2px; box-shadow: var(--paper-shadow); transform-origin: left center; backface-visibility: hidden; }
+#pageNext { display: none; }
+.flip-wrap.two-page .page { width: calc(50% - 18px); transform: none; }
+.flip-wrap.two-page #pageCurrent { left: 12px; box-shadow: inset -1px 0 0 rgba(0,0,0,.06), var(--paper-shadow); }
+.flip-wrap.two-page #pageNext { display: block; left: auto; right: 12px; box-shadow: inset 1px 0 0 rgba(0,0,0,.06), var(--paper-shadow); }
 .page.flip-out { animation: flipOut .45s ease-in forwards; }
 .page.flip-in { animation: flipIn .45s ease-out; }
 @keyframes flipOut { from { transform: rotateY(0deg); opacity: 1; } to { transform: rotateY(-72deg); opacity: 0; } }
 @keyframes flipIn { from { transform: rotateY(72deg); opacity: 0; } to { transform: rotateY(0deg); opacity: 1; } }
 .page-content {
-  height: 100%; overflow-y: auto; padding: 30px 28px 56px; max-width: 680px; margin: 0 auto; background: transparent;
+  box-sizing: border-box; /* v3.2: height:100% MUST include the padding.
+     With content-box sizing the element was page-height + 100px of padding,
+     so the .page (overflow:hidden) clipped the bottom ~44px of every page's
+     text — invisible, and scrollHeight==clientHeight could not see it,
+     because both were inflated the same way. With border-box, clientHeight
+     is the true page height and paginate()'s pageH is the true visible
+     content height. */
+  height: 100%; overflow: hidden; padding: 30px 28px 48px; background: transparent;
+  /* v3.2: NO vertical scrolling — the whole page fits one screen. paginate()
+     splits the chapter into screenfuls; overflow goes to the NEXT page.
+     overflow: hidden is the guarantee: a page that cannot scroll cannot
+     hide text below the fold. */
   /* v3: no accidental text selection while reading — the OS Translate/Copy
      menu must never pop open. Tap-to-hear still works on .w spans. */
   user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
 .page-content.two-col { display: flex; gap: 28px; max-width: 980px; }
 .page-content.two-col .col { flex: 1; min-width: 0; }
-/* Desktop: same full-bleed page, just roomier text margins. No card. */
+/* Desktop: same visible page, just roomier text margins. */
 @media (min-width: 761px) {
-  .page-content { padding: 44px 52px 64px; }
+  .page-content { padding: 44px 52px 56px; }
   .page-content.two-col { padding: 44px 48px 64px; }
 }
 /* reading typography */
@@ -252,16 +277,24 @@ body.focus-mode .page-content { padding-top: 30px; }
 .load-actions { display: flex; gap: 10px; justify-content: center; margin-top: 18px; }
 
 /* ---------- v3: real page-curl turn (turning leaf) ---------- */
-/* v3.1: the leaf is the FULL-BLEED page itself (no radius, no card shadow).
-   The curl reads through the 3D rotation + a moving shade + a soft edge
-   shadow that only exists while the leaf turns. The keyframes bend the leaf
-   (a slight scaleX pinch at mid-turn) so it reads as paper curling, not a
-   flat card rotating. */
+/* v3.2: the leaf is the visible PAGE itself (the panel, with its paper,
+   edges and shadow) — it sits exactly over the turning panel, so the curl
+   starts from the page as it looks. The keyframes bend the leaf (a slight
+   scaleX pinch at mid-turn) so it reads as paper curling, not a flat card
+   rotating. The interactive drag curl reuses this leaf and drives its
+   rotateY directly from the pointer. */
 .turn-leaf {
   position: absolute; inset: 0; z-index: 20; pointer-events: none;
   transform-origin: left center; transform-style: preserve-3d; will-change: transform;
   border-radius: 0; overflow: visible;
 }
+/* v3.2: the drag-curl settle (complete or spring back) animates the transform
+   the finger left behind. During the drag itself there is NO transition —
+   the leaf tracks the pointer 1:1. */
+.turn-leaf.settling { transition: transform .28s cubic-bezier(.32,.72,.35,1); }
+/* v3.2: going back in two-page mode, the left page turns over the SPINE
+   (its right edge), not the outer edge. */
+.turn-leaf.spine-right { transform-origin: right center; }
 .turn-leaf .leaf-face {
   position: absolute; inset: 0; border-radius: 0; overflow: hidden;
   backface-visibility: hidden; -webkit-backface-visibility: hidden;
