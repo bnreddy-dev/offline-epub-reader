@@ -23,7 +23,7 @@
 }
 /* Theme: white — clean, airy, refined blue accent */
 [data-theme="white"] {
-  --bg: #f4f4f2; --surface: #ffffff; --surface2: #e9e9e6;
+  --bg: #ffffff; --surface: #ffffff; --surface2: #e9e9e6; /* v3.6.4 (F76): --bg was #f4f4f2 light grey — the home screen then looked like the theme had reset after reload; "White" must read white everywhere, not only on the reader paper */
   --text: #191919; --muted: #616161; --border: #dcdcd8;
   --accent: #155e9e; --accent-text: #ffffff;
   --highlight: #fff3a3; --speak: #ffe98a; --word: #155e9e;
@@ -154,9 +154,16 @@ button:active { transform: scale(.97); }
    book, with a spine gutter and a faint spine edge on each inner side.
    The page content NEVER scrolls: paginate() splits the chapter into
    screenfuls, one per page, and overflow goes to the next page. */
-/* v3.1: touch-action pan-y lets horizontal drags reach the pointer swipe
-   handler instead of the browser swallowing them as a scroll. */
-.flip-wrap { flex: 1; overflow: hidden; position: relative; perspective: 1400px; background: var(--desk); touch-action: pan-y; }
+/* v3.6.4 (F74): touch-action MUST be none, not pan-y. pan-y told the
+   browser vertical touches are its scroll gesture — and the browser claims
+   any touch that starts moving vertically (even 20px of finger drift) as a
+   native pan, fires pointercancel, and the swipe dies silently — even
+   though NOTHING on this screen scrolls (body and .screen are both
+   overflow:hidden). A real finger swipe is never perfectly horizontal, so
+   most phone swipes died this way. With none, every touch reaches the
+   app's pointer handlers, which decide direction themselves (horizontal
+   drag -> curl; vertical drag in vertical mode -> page turn; tap -> tap). */
+.flip-wrap { flex: 1; overflow: hidden; position: relative; perspective: 1400px; background: var(--desk); touch-action: none; }
 .page { position: absolute; top: 12px; bottom: 12px; left: 50%; width: min(680px, calc(100% - 24px)); transform: translateX(-50%); overflow: hidden; background: var(--surface); border: 1px solid rgba(0,0,0,.08); border-radius: 2px; box-shadow: var(--paper-shadow); transform-origin: left center; backface-visibility: hidden; }
 #pageNext { display: none; }
 .flip-wrap.two-page .page { width: calc(50% - 18px); transform: none; }

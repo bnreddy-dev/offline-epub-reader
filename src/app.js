@@ -32,7 +32,7 @@
    the same number; on load the app fetches it (no-store) and, if it differs,
    shows a "New version available — Reload" banner. That is the stale-cache
    fix: a hard reload can never silently keep serving an old build. */
-const APP_VERSION = '3.6.3';
+const APP_VERSION = '3.6.4';
 
 /* ---------------- utilities ---------------- */
 const $ = s => document.querySelector(s);
@@ -544,7 +544,11 @@ function kokoroProgressToBar(d) {
   if (pct == null) return;
   const file = String((d && d.file) || '');
   if (file.indexOf('model') >= 0 || !file) setDlProgress('Downloading English voice', pct, 100);
-  else if (pct >= 100) setDlProgress('Downloading English voice', 2, 100);
+  // v3.6.4 (F78): the old `else if (pct >= 100)` branch dragged the bar
+  // back to 2/100 whenever a small file (config/tokenizer) finished after
+  // the 92 MB model had already reached 100/100 — a backwards jump right
+  // at completion. Small files need no representation: the model file's
+  // progress IS the bar, and it is monotonic now.
 }
 
 /* ---------------- Kokoro in a Web Worker (v3) ---------------- */
@@ -2918,10 +2922,16 @@ async function speakCurrent() {
   // inference — >20 s of silence with the Pause icon showing and the
   // counter frozen reads as "never plays". Say so in the audio bar
   // (language-scoped 'en', so it never leaks onto a Telugu/Hindi book) and
-  // keep the top bar visible until audio actually starts. Only when Kokoro
-  // is not ready yet; a warmed voice needs no message.
+  // keep the top bar visible until audio actually starts. Show it whenever
+  // this sentence still needs a real synthesis — a warmed voice with the
+  // sentence already prefetched needs no message (fast path, no flash),
+  // but a warmed voice with a COLD sentence still takes ~20 s on first
+  // audio, and the old `!NEURAL.kokoroWarmed` guard hid the message
+  // exactly then (v3.6.3 live test: the book-open warm-up sets the latch
+  // before the user ever presses Play). Same prefetched check the Hindi
+  // branch already uses below. (v3.6.4 F75)
   const key = prefetchKey(state.currentChapter, state.sentenceIndex);
-  if (langCode(lang) === 'en' && !NEURAL.kokoro && !NEURAL.kokoroWarmed) {
+  if (langCode(lang) === 'en' && !NEURAL.kokoro && (!NEURAL.kokoroWarmed || !NEURAL.prefetch.get(key))) {
     setNeuralStatus('Preparing English voice…', 'en');
     // v3.6.3 (F66): the old `if (!DL.active)` guard meant the preparing
     // bar never painted when a download bar was already active (the
@@ -2941,7 +2951,6 @@ async function speakCurrent() {
     setDlProgress('Preparing Hindi voice…', 0, 100);
   }
   const rate = effectiveRate();
-  prefetchFrom(state.sentenceIndex + 1);
   let res = null;
   try {
     const cached = NEURAL.prefetch.get(key);
@@ -2981,6 +2990,12 @@ async function speakCurrent() {
     return;
   }
   if (!narrAlive(myNarr)) return;
+  // v3.6.4 (F75): prefetch the NEXT sentence only now that THIS sentence's
+  // synth has resolved — posting it before the foreground synth let it
+  // queue ahead of the sentence the user is waiting for on the single
+  // worker, stretching first audio by ~20 s. During playClip the worker
+  // is idle, so nothing is lost.
+  prefetchFrom(state.sentenceIndex + 1);
   if (res.empty) {
     clearSentenceSpans();
     state.sentenceIndex++;
@@ -3231,16 +3246,16 @@ function timeRemainingBook() {
 }
 async function playFromStart() {
   if (!state.meta) return;
-  const m = state.meta;
-  const openLines = [];
-  if (m.title) openLines.push({ text: m.title, paraIdx: -1, mood: 'neutral' });
-  if (m.subtitle) openLines.push({ text: m.subtitle, paraIdx: -1, mood: 'neutral' });
-  if (m.author) openLines.push({ text: 'by ' + m.author, paraIdx: -1, mood: 'neutral' });
+  // v3.6.4 (F80): the old code prepended title/subtitle/author lines into
+  // state.sentences here, so a PDF showed x/15 on first open but x/13 on
+  // reopen (reopenBook never calls this), and saved positions were off by
+  // 2 between the two paths. EPUBs never prepend (this function is
+  // PDF-only) — narration now starts at the chapter's first sentence on
+  // both paths, and the denominator is the chapter count everywhere.
   const introIdx = state.chapters.findIndex(c => c.kind === 'intro');
   const firstIdx = nextNarratableChapter(0);
   const target = introIdx >= 0 ? introIdx : (firstIdx != null ? firstIdx : 0);
   await loadChapter(target);
-  state.sentences = openLines.concat(state.sentences);
   state.sentenceIndex = 0;
   state.playing = true;
   state.followNarration = true;
@@ -4008,7 +4023,10 @@ function wire() {
   $('#btnOpenBook').onclick = () => $('#fileInput').click();
   $('#fileInput').addEventListener('change', ev => { handleFile(ev.target.files[0]); ev.target.value = ''; });
   $('#restoreInput').addEventListener('change', ev => { if (ev.target.files[0]) restoreLibrary(ev.target.files[0]); ev.target.value = ''; });
-  $('#btnBack').onclick = () => { stopNarration(false); showScreen('home'); };
+  // v3.6.4 (F79): Back is the normal exit path — write the auto-bookmark
+  // here, after stopNarration's final savePosition, or the Continue
+  // card's strict position check never matches and the quote hides.
+  $('#btnBack').onclick = () => { stopNarration(false); if (state.meta) addBookmark(true); showScreen('home'); };
   $('#btnPlay').onclick = playNarration;
   $('#btnPlayBelow').onclick = playNarration;
   $('#btnPrev').onclick = prevSentence;
@@ -4383,7 +4401,12 @@ function registerServiceWorker() {
    if the deployed version is newer than the running one, shows the banner. */
 async function checkForUpdate() {
   try {
-    const res = await fetch('version.json', { cache: 'no-store' });
+    // v3.6.4 (F77): cache-bust the URL too — `no-store` bypasses the
+    // browser cache, but a CDN edge (GitHub Pages: max-age=600) can still
+    // answer a plain version.json from its own cache inside the window
+    // after a deploy, so a stale page compares stale-vs-stale and never
+    // shows the banner. A fresh query string is a new edge cache key.
+    const res = await fetch('version.json?v=' + Date.now(), { cache: 'no-store' });
     if (!res.ok) return;
     const data = await res.json();
     if (data && data.version && data.version !== APP_VERSION) showUpdateBanner();
@@ -4442,6 +4465,12 @@ function init() {
   setTimeout(() => { if (loadToken === initToken) hideLoad(); }, 450); // keep the loading state visible long enough to see
   registerServiceWorker();
   checkForUpdate(); // v3.1: stale-cache fix — offer reload if a newer build is live
+  // v3.6.4 (F77): one check at load is the only chance — if the deploy
+  // lands inside the CDN's max-age window the first check compares
+  // stale-vs-stale and the banner never appears for the whole session.
+  // Re-check whenever the tab becomes visible again and every 5 min.
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkForUpdate(); });
+  setInterval(checkForUpdate, 5 * 60 * 1000);
   // v3.5 (F57): if the Kokoro model is already on this device, warm it up
   // in the background NOW (worker + model + first inference), so the first
   // English Play after a reload starts promptly instead of waiting ~30 s

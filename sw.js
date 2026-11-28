@@ -100,7 +100,12 @@ self.addEventListener('fetch', event => {
   if (isShellRequest(req)) {
     event.respondWith((async () => {
       try {
-        const res = await fetch(req);
+        // v3.6.4 (F77): `fetch(req)` inherits the request's default cache
+        // mode, so the browser HTTP cache could satisfy it without any
+        // network trip — "network-first" was HTTP-cache-first in practice,
+        // and a stale shell was served (and re-put into the cache) for the
+        // whole max-age window. `no-store` makes the network trip real.
+        const res = await fetch(req, { cache: 'no-store' });
         if (res && res.status === 200 && req.cache !== 'no-store') {
           const cache = await caches.open(SHELL_CACHE);
           cache.put(req, res.clone()).catch(() => {});
