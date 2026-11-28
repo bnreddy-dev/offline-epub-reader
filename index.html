@@ -816,7 +816,7 @@ body.focus-mode .focus-exit-btn { display: inline-flex; }
       </label>
       <div class="set-row"><span data-i18n="sleepTimer">Sleep timer</span><button id="btnSleep" class="mini-btn">⏱ Set timer</button></div>
       <div class="set-note" id="kokoroNote">Voices in your browser — Kokoro for English, Google voice for Hindi and Telugu. Each voice downloads when you open a book in that language, then it works offline. No device voice or install is needed.</div>
-      <div class="set-note" id="appVersion">Version 3.6.5</div>
+      <div class="set-note" id="appVersion">Version 3.6.6</div>
       <button id="btnExportHighlights" class="tool-btn" data-i18n="exportHighlights">Export highlights</button>
     </div>
   </div>
@@ -964,7 +964,7 @@ window.__PDF_WORKER_SRC__ = "/**\n * @licstart The following is the entire licen
    the same number; on load the app fetches it (no-store) and, if it differs,
    shows a "New version available — Reload" banner. That is the stale-cache
    fix: a hard reload can never silently keep serving an old build. */
-const APP_VERSION = '3.6.5';
+const APP_VERSION = '3.6.6';
 
 /* ---------------- utilities ---------------- */
 const $ = s => document.querySelector(s);
@@ -1456,7 +1456,12 @@ function setDlProgress(label, done, total, reset) {
   if (!labelChanged && now - DL.lastPaint < 150 && done < total) return; // throttle DOM writes
   DL.lastPaint = now;
   DL.pct = pct;
-  $('#dlLabel').textContent = label + (total > 0 ? ' — ' + done + '/' + total : '');
+  // v3.6.6 (secondary b): a Preparing label is a state, not a download —
+  // "Preparing English voice… — 0/100" reads as a stuck 0% download while
+  // Kokoro warms up (silent cache load + first inference, no progress
+  // events). Show the label without the fraction.
+  const showFrac = total > 0 && (label || '').indexOf('Preparing') !== 0;
+  $('#dlLabel').textContent = label + (showFrac ? ' — ' + done + '/' + total : '');
   $('#dlFill').style.width = pct + '%';
   $('#dlPct').textContent = pct + '%';
 }
@@ -2395,11 +2400,17 @@ async function openEpub(arrayBuffer, fileName) {
   }
   const id = bookIdFor(title, author);
   state.book = book; state.bookType = 'epub'; state.pdfPages = null;
-  state.meta = { id, title, author, subtitle, language: lang || 'en', description: subtitle, coverUrl, fileName };
+  state.meta = { id, title, author, subtitle, language: lang || 'en', description: subtitle, coverUrl, fileName, size: arrayBuffer.byteLength };
   state.chapters = chapters;
   state.currentChapter = 0; state.sentenceIndex = 0; state.cacheCount = 0;
   if (!lang) {
-    const first = await loadChapterText(0).catch(() => null);
+    // v3.6.6 (secondary c): chapter 0 is often cover/title/front matter
+    // (English), so sampling it misdetects a Hindi book as 'en' and routes
+    // it down the Kokoro English-voice path. Sample the first NARRATABLE
+    // chapter instead — the body text, not the cover. (PDF sampling, first
+    // 3 pages, is left as-is: changing it is higher-risk and out of scope.)
+    const narr = nextNarratableChapter(0);
+    const first = await loadChapterText(narr != null ? narr : 0).catch(() => null);
     if (first) state.meta.language = detectScriptLang(first.paras.map(p => p.text).join(' '));
   }
   await registerBook();
@@ -2607,7 +2618,7 @@ async function openPdf(arrayBuffer, fileName) {
   for (let i = 0; i < pages.length; i += per) {
     chapters.push({ title: 'Part ' + (chapters.length + 1) + ' (pages ' + (i + 1) + '–' + Math.min(i + per, pages.length) + ')', href: '', spineIndex: -1, kind: 'chapter', mood: null, pageStart: i, pageEnd: Math.min(i + per, pages.length) });
   }
-  state.meta = { id, title, author, subtitle: '', language: lang, description: '', coverUrl: null, fileName };
+  state.meta = { id, title, author, subtitle: '', language: lang, description: '', coverUrl: null, fileName, size: arrayBuffer.byteLength };
   state.chapters = chapters;
   state.currentChapter = 0; state.sentenceIndex = 0; state.cacheCount = 0;
   await registerBook();
@@ -2623,6 +2634,7 @@ async function registerBook() {
   const existing = library.find(b => b.id === m.id);
   const entry = existing || { id: m.id, title: m.title, author: m.author, language: m.language, coverUrl: m.coverUrl, chapters: state.chapters.length, progress: 0, lastChapter: 0, lastSentence: 0, updated: Date.now() };
   entry.title = m.title; entry.author = m.author; entry.language = m.language; entry.coverUrl = m.coverUrl; entry.chapters = state.chapters.length; entry.updated = Date.now();
+  entry.type = state.bookType; entry.size = m.size || 0; // v3.6.6 (F91c): the card must distinguish PDF from EPUB + show the size
   if (!existing) library.unshift(entry);
   else { library.splice(library.indexOf(existing), 1); library.unshift(entry); }
   library = library.slice(0, 12);
@@ -2650,9 +2662,87 @@ function savePosition() {
     localStorage.setItem('epubreader.pos.' + state.meta.id, JSON.stringify({ chapter: state.currentChapter, sentence: state.sentenceIndex, at: Date.now() }));
   } catch (e) {}
 }
+function loadPositionFor(id) {
+  try { return JSON.parse(localStorage.getItem('epubreader.pos.' + id) || 'null'); } catch (e) { return null; }
+}
 function loadPosition() {
   if (!state.meta) return null;
-  try { return JSON.parse(localStorage.getItem('epubreader.pos.' + state.meta.id) || 'null'); } catch (e) { return null; }
+  return loadPositionFor(state.meta.id);
+}
+/* v3.6.6 (F91a): per-book localStorage keys, moved old-id -> new-id during
+   the legacy-PDF migration. When the new id already has a value, keep the
+   NEWER one (embedded at/updated timestamps where the value carries one);
+   otherwise the old value moves over. Arrays/objects without timestamps
+   keep the new value on a tie — in practice the new id is fresh, so the
+   old value simply moves. */
+const PER_BOOK_KEYS = ['epubreader.pos.', 'epubreader.auto.', 'epubreader.bm.', 'epubreader.hl.', 'epubreader.done.', 'epubreader.pb.', 'epubreader.notes.'];
+function movePerBookKey(prefix, oldId, newId) {
+  let oldRaw = null, newRaw = null;
+  try { oldRaw = localStorage.getItem(prefix + oldId); } catch (e) {}
+  if (!oldRaw) return;
+  try { newRaw = localStorage.getItem(prefix + newId); } catch (e) {}
+  if (!newRaw) { try { localStorage.setItem(prefix + newId, oldRaw); } catch (e) {} }
+  else {
+    let oldTs = 0, newTs = 0;
+    try { const o = JSON.parse(oldRaw); oldTs = (o && (o.at || o.updated)) || 0; } catch (e) {}
+    try { const n = JSON.parse(newRaw); newTs = (n && (n.at || n.updated)) || 0; } catch (e) {}
+    if (oldTs > newTs) { try { localStorage.setItem(prefix + newId, oldRaw); } catch (e) {} }
+  }
+  try { localStorage.removeItem(prefix + oldId); } catch (e) {}
+}
+/* v3.6.6 (F91a): startup migration + dedupe for legacy-stored PDFs.
+   v3.6.5 changed the PDF id from the legacy hash to a type-suffixed hash
+   but shipped NO migration for books already stored under the old id, and
+   reopenBook trusted the RECOMPUTED id instead of the REQUESTED id — so
+   opening a legacy-stored PDF created a second, byte-less ("phantom")
+   library entry, and Continue targeted the phantom, whose file lookup can
+   never succeed. For each library entry with a legacy-hash id whose stored
+   record has type === 'pdf': re-key the bytes to the new PDF id, delete the
+   legacy IDB row / Cache entry / bookmeta key, move per-book keys old->new
+   keeping the newer value, delete stale chapter-cache/audio rows
+   `oldId::*`, and merge or rename the library entry (keep max progress,
+   newer updated). EPUB entries and missing-file entries are left untouched
+   (a missing file must stay restorable via askMissingBook re-pick).
+   Also backfills type/size on every entry from its stored record.
+   Never throws — a migration failure must never break startup. */
+async function migrateLegacyPdfEntries() {
+  try {
+    let changed = false;
+    for (const entry of [...library]) {
+      const legacyId = bookIdFor(entry.title, entry.author);
+      if (entry.id !== legacyId) continue;
+      const rec = await loadBookFile(legacyId).catch(() => null);
+      if (!rec || rec.type !== 'pdf' || !rec.data) continue; // EPUB or missing file: untouched
+      const newId = bookIdFor(entry.title, entry.author, 'pdf');
+      if (newId === legacyId) continue;
+      const buf = rec.data;
+      await saveBookFile({ id: newId, title: entry.title, author: entry.author }, true, buf);
+      await idbDelete('books', legacyId).catch(() => {});
+      try { if (window.caches) { const c = await caches.open(BOOK_CACHE); await c.delete(new Request(bookCacheKey(legacyId))); } } catch (e) {}
+      try { localStorage.removeItem('epubreader.bookmeta.' + legacyId); } catch (e) {}
+      PER_BOOK_KEYS.forEach(p => movePerBookKey(p, legacyId, newId));
+      const chs = await idbAll('chapters').catch(() => []);
+      for (const c of chs.filter(c => c.key && c.key.indexOf(legacyId + '::') === 0)) await idbDelete('chapters', c.key).catch(() => {});
+      await idbClearAudioForBook(legacyId).catch(() => {});
+      const existingNew = library.find(b => b.id === newId);
+      if (existingNew) {
+        existingNew.progress = Math.max(existingNew.progress || 0, entry.progress || 0);
+        existingNew.updated = Math.max(existingNew.updated || 0, entry.updated || 0);
+        existingNew.type = 'pdf'; existingNew.size = buf.byteLength;
+        library = library.filter(b => b.id !== legacyId);
+      } else {
+        entry.id = newId; entry.type = 'pdf'; entry.size = buf.byteLength; entry.updated = Date.now();
+      }
+      changed = true;
+    }
+    for (const b of library) {
+      if (b.type && b.size) continue;
+      const rec = await loadBookFile(b.id).catch(() => null);
+      if (rec && rec.data) { b.type = rec.type || b.type || 'epub'; b.size = rec.data.byteLength; changed = true; }
+      else if (rec) { b.type = rec.type || b.type; changed = true; }
+    }
+    if (changed) { saveLibrary(); renderLibrary(); renderContinueCard(); }
+  } catch (e) { /* migration must never break startup */ }
 }
 function applyPerBookSettings() {
   const pb = state.perBook || {};
@@ -4264,7 +4354,11 @@ async function startPreload() {
   if (!state.meta || state.preloadBusy) return;
   state.preloadBusy = true;
   try {
-    let next = state.currentChapter + 1;
+    // v3.6.6 (F92b): the loop used to start at currentChapter + 1, and the
+    // open target is chapter 2 (intro) — so front-matter chapters 0 (Cover)
+    // and 1 (title page), both kind `front`, were NEVER cached and steady
+    // state was 19/21, never 21/21. Start at 0 so every chapter is cached.
+    let next = 0;
     const done = await idbCountChapters(state.meta.id).catch(() => 0);
     state.cacheCount = done;
     updateCacheInfo();
@@ -4521,6 +4615,12 @@ function focusExit() {
 }
 
 /* ---------------- library UI ---------------- */
+/* v3.6.6 (F91c): sizes under 1 MB read as KB (a 15 KB PDF is not "0.0 MB"). */
+function fmtSize(bytes) {
+  if (!bytes) return '';
+  if (bytes < 1048576) return Math.round(bytes / 1024) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
 function renderLibrary() {
   const list = $('#recentList');
   if (!list) return;
@@ -4528,17 +4628,39 @@ function renderLibrary() {
   if (!library.length) { list.appendChild(el('div', 'empty-note', t('noBooksYet'))); return; }
   library.forEach(b => {
     const card = el('button', 'book-card');
+    card.dataset.bookId = b.id;
     if (b.coverUrl) { const img = el('img', 'book-cover'); img.src = b.coverUrl; img.alt = ''; card.appendChild(img); }
     else card.appendChild(el('div', 'book-cover-ph', '📖'));
     const meta = el('div', 'book-meta');
     meta.appendChild(el('div', 'book-title', b.title));
     meta.appendChild(el('div', 'book-author', b.author || ''));
-    const prog = b.chapters ? Math.round((b.progress || 0)) + '% · ' + (b.language || '').toUpperCase() : '';
+    // v3.6.6 (F91c): the card distinguishes the kind + size, so a PDF and
+    // an EPUB of the same title are visibly different entries:
+    // `15% · EN · PDF · 15 KB`.
+    const typeLabel = b.type === 'pdf' ? 'PDF' : (b.type === 'epub' ? 'EPUB' : '');
+    const sizeLabel = fmtSize(b.size);
+    const prog = b.chapters ? Math.round((b.progress || 0)) + '% · ' + (b.language || '').toUpperCase() + (typeLabel ? ' · ' + typeLabel : '') + (sizeLabel ? ' · ' + sizeLabel : '') : '';
     meta.appendChild(el('div', 'book-prog', prog));
     card.appendChild(meta);
     card.onclick = () => reopenBook(b.id);
     list.appendChild(card);
   });
+  // v3.6.6 (F91c): entries whose file is gone in BOTH stores render a
+  // restore hint. Async (IDB cannot be read synchronously); loadBookFile
+  // self-heals a one-store copy, so a marked entry is truly gone.
+  markMissingLibraryFiles();
+}
+async function markMissingLibraryFiles() {
+  for (const b of [...library]) {
+    const rec = await loadBookFile(b.id).catch(() => null);
+    if (rec && rec.data) continue;
+    const card = document.querySelector('.book-card[data-book-id="' + b.id + '"]');
+    if (card && !card.querySelector('.book-missing')) {
+      const m = el('div', 'book-missing', '⚠ file missing — tap to restore');
+      const meta = card.querySelector('.book-meta');
+      if (meta) meta.appendChild(m);
+    }
+  }
 }
 function renderContinueCard() {
   const card = $('#continueCard');
@@ -4578,11 +4700,24 @@ async function reopenBook(id) {
   const entry = library.find(b => b.id === id);
   showLoad('Opening book…', 20);
   const token = ++loadToken;
+  // v3.6.6 (F91b): capture the REQUESTED id + position BEFORE openPdf /
+  // openEpub recompute the id — the old code trusted the recomputed id, so
+  // a legacy-stored PDF opened under a new id while Continue still pointed
+  // at the old one (the phantom entry). The restore below falls back to
+  // the requested position when the new id has none.
+  const requestedId = id;
+  const requestedPos = loadPositionFor(id);
   try {
     if (rec.type === 'pdf') await openPdf(rec.data, entry ? entry.title + '.pdf' : 'book.pdf');
     else await openEpub(rec.data, entry ? entry.title + '.epub' : 'book.epub');
     if (token !== loadToken) return;
-    const pos = loadPosition();
+    // v3.6.6 (F91b): trust the REQUESTED id/pos, not the recomputed one.
+    // Same id: the stored position under it. Different id (the migration
+    // case): the new id's own stored position if it has one, else the
+    // requested position captured before the open.
+    const pos = state.meta.id === requestedId
+      ? loadPositionFor(requestedId)
+      : (loadPositionFor(state.meta.id) || requestedPos);
     if (pos) {
       await loadChapter(pos.chapter || 0);
       state.pendingSentence = pos.sentence || 0;
@@ -4598,6 +4733,13 @@ async function reopenBook(id) {
       buildSentenceSpans(); scrollToSentence();
     } else {
       await loadChapter(nextNarratableChapter(0) || 0);
+    }
+    // v3.6.6 (F91b): self-heal — if the open left no stored file under the
+    // (possibly new) id, save the bytes already in hand. Guarded to run
+    // only when the lookup is null, so a healthy open never re-saves.
+    if (token === loadToken) {
+      const check = await loadBookFile(state.meta.id).catch(() => null);
+      if (!check || !check.data) await saveBookFile(state.meta, state.bookType === 'pdf', rec.data).catch(() => {});
     }
     if (token !== loadToken) return;
     hideLoad();
@@ -4671,10 +4813,14 @@ function askSaveFailure(errName) {
 }
 // v3.6.2 (F62): a missing stored file is a dead end no more. Shows the
 // persistent overlay error with a "Pick the file again" button that opens
-// the file picker — re-picking the same book restores it under the same
-// library entry id (the id is a hash of title+author, and registerBook
-// updates the existing entry instead of duplicating it), so Continue works
-// again — plus a Close option. The picker is opened synchronously inside
+// the file picker — re-picking the same book restores it (for EPUBs and
+// already-migrated PDFs under the same library entry id, the id being a
+// hash of title+author(+type), and registerBook updates the existing entry
+// instead of duplicating it). v3.6.6 (F91) correction to the old comment:
+// a legacy PDF stored under the old hash is migrated to the type-suffixed
+// id at startup, so a re-pick after migration restores under the NEW id —
+// the library entry was already re-keyed, so no duplicate appears either
+// way. Plus a Close option. The picker is opened synchronously inside
 // the button tap (a user gesture), not after the await. Resolves to
 // 'repick' | 'close'.
 function askMissingBook(title) {
@@ -4785,6 +4931,7 @@ async function handleFile(file) {
     startPreload();
     updateAudioBar();
     prepareVoiceForBook();   // v3: the book's language downloads NOW, top bar
+    migrateLegacyPdfEntries().catch(() => {}); // v3.6.6 (F91a): re-run after an upload — a re-uploaded book must not resurrect a stale legacy PDF entry
     if (isPdf) {
       toast('PDF converted — starting read-aloud');
       setTimeout(() => playFromStart(), 600);
@@ -4955,7 +5102,7 @@ async function renderStoragePanel() {
   html += '<p>Used: ' + ((est.usage || 0) / 1048576).toFixed(1) + ' MB of ' + ((est.quota || 0) / 1073741824).toFixed(1) + ' GB available.</p>';
   if (!all.length) html += '<p>No books cached yet.</p>';
   all.forEach(b => {
-    html += '<div class="row"><span>' + esc(b.title || b.id) + ' — ' + ((b.data ? b.data.byteLength : 0) / 1048576).toFixed(1) + ' MB' + (b.viaCache ? ' (offline cache)' : '') + '</span><button class="mini-btn" data-del="' + esc(b.id) + '">Delete</button></div>';
+    html += '<div class="row"><span>' + esc(b.title || b.id) + ' — ' + (fmtSize(b.data ? b.data.byteLength : 0) || '0 KB') + (b.viaCache ? ' (offline cache)' : '') + '</span><button class="mini-btn" data-del="' + esc(b.id) + '">Delete</button></div>';
   });
   p.innerHTML = html;
   p.classList.remove('hidden');
@@ -5159,7 +5306,11 @@ function wire() {
     // no way out short of navigating away.
     if (ev.key === 'Escape') {
       if (document.body.classList.contains('focus-mode')) { focusExit(); return; }
-      closeDrawer('escape'); $('#settingsSheet').classList.add('hidden'); const rm = $('#readerMenu'); if (rm) rm.classList.add('hidden'); return;
+      // v3.6.6 (F92a): hygiene only — the old code called closeDrawer on
+      // EVERY Escape even when the drawer was already closed, logging
+      // phantom closes. No behaviour change: a closed drawer stays closed.
+      if ($('#drawer').classList.contains('open')) closeDrawer('escape');
+      $('#settingsSheet').classList.add('hidden'); const rm = $('#readerMenu'); if (rm) rm.classList.add('hidden'); return;
     }
     if ($('#reader').classList.contains('hidden')) return;
     // v3.3 (F34): when the page slider has focus, ArrowRight/ArrowLeft must
@@ -5425,17 +5576,57 @@ function registerServiceWorker() {
 }
 
 /* v3.1 — version check (stale-cache fix). Fetches version.json with no-store;
-   if the deployed version is newer than the running one, shows the banner. */
+   if the deployed version is newer than the running one, shows the banner.
+   v3.6.6 (F90): the deployed version is read from the GitHub REST API,
+   NOT from version.json. Measured live 2026-11-28, GitHub Pages' Fastly
+   edge IGNORES query strings in its cache key and IGNORES Cache-Control:
+   no-cache / max-age=0 request headers — a never-used version.json?v=<random>
+   returned X-Cache: HIT with Age 48-70 and the old ETag. So the v3.6.4
+   ?v= buster and the v3.6.5 ?sw= buster can NEVER defeat the edge for any
+   transition; the v3.6.5 probe passed only because its edge simulator
+   encoded the false assumption (any ?v=/?sw= URL = new edge key). The API
+   (api.github.com, CORS *, not behind the Pages edge) answers live, so a
+   plain load inside the edge window still learns the new version at once.
+   version.json stays as FALLBACK if the API call fails (unauthenticated
+   rate limit is 60 req/hr/IP; a 5-min check is ~12/hr per browser — fine).
+   HONEST LIMIT: for the 3.6.5->3.6.6 transition a banner on the next plain
+   load is impossible by any code shipped in 3.6.6 — the code that runs on
+   that load is 3.6.5's, and every freshness signal it can emit is ignored
+   by the edge. That transition's banner can appear only after the edge
+   entry expires (<= ~10 min after deploy) via the 5-min interval /
+   visibilitychange re-check on a tab left open on 3.6.5, or on a plain load
+   after expiry. The API check works from 3.6.6->3.6.7 onward.
+   window.__githubApiUrl is a probe override (the sandbox has no internet);
+   in production it is always the real api.github.com URL below.
+   window.__lastCheck records the RESPONSE the check actually received
+   (version + source), so a probe asserts on that, not only on banner
+   visibility. */
+const GITHUB_VERSION_API = 'https://api.github.com/repos/bnreddy-dev/offline-epub-reader/contents/version.json';
 async function checkForUpdate() {
   try {
-    // v3.6.4 (F77): cache-bust the URL too — `no-store` bypasses the
-    // browser cache, but a CDN edge (GitHub Pages: max-age=600) can still
-    // answer a plain version.json from its own cache inside the window
-    // after a deploy, so a stale page compares stale-vs-stale and never
-    // shows the banner. A fresh query string is a new edge cache key.
-    const res = await fetch('version.json?v=' + Date.now(), { cache: 'no-store' });
-    if (!res.ok) return;
-    const data = await res.json();
+    let data = null, source = null;
+    try {
+      const apiUrl = (typeof window !== 'undefined' && window.__githubApiUrl) || GITHUB_VERSION_API;
+      const res = await fetch(apiUrl, { headers: { 'Accept': 'application/vnd.github+json' } });
+      if (res.ok) {
+        const j = await res.json();
+        // GitHub contents API: the file is the base64 `content` field.
+        // A mock may return the plain JSON instead — accept both.
+        if (j && typeof j.content === 'string') data = JSON.parse(atob(j.content.replace(/\s/g, '')));
+        else if (j && j.version) data = j;
+        if (data) source = 'api';
+      }
+    } catch (e) { /* API unreachable / rate-limited — fall back below */ }
+    if (!data) {
+      // Fallback: version.json. No query buster — proven dead on this host
+      // (the edge ignores query strings in its cache key); no-store still
+      // bypasses the browser's own HTTP cache.
+      const res = await fetch('version.json', { cache: 'no-store' });
+      if (!res.ok) return;
+      data = await res.json();
+      source = 'version.json';
+    }
+    try { window.__lastCheck = { version: data && data.version, source, at: Date.now() }; } catch (e) {}
     if (data && data.version && data.version !== APP_VERSION) showUpdateBanner();
   } catch (e) {}
 }
@@ -5445,7 +5636,7 @@ function showUpdateBanner() {
 }
 
 /* ---------------- init ---------------- */
-function init() {
+async function init() {
   // v3.6.5 (U): strip a one-time reload cache-buster (?v=...) from the URL
   // so the address bar shows the plain link (clean-link rule). Only the
   // 'v' parameter added by the update-banner reload is removed; any other
@@ -5490,6 +5681,9 @@ function init() {
   const ver = $('#appVersion'); if (ver) ver.textContent = 'Version ' + APP_VERSION;
   setMood('neutral');
   wire();
+  // v3.6.6 (F91a): migrate legacy-stored PDFs BEFORE the first render, so
+  // the library / Continue card never show the phantom legacy id.
+  await migrateLegacyPdfEntries();
   renderLibrary();
   renderContinueCard();
   showScreen('home');
