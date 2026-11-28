@@ -5,12 +5,35 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#f6efdd">
 <title>Offline EPUB Reader</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Telugu:wght@400;500;700&family=Noto+Serif+Telugu:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
 /*__CSS__*/
 </style>
 </head>
 <body>
 <div id="app">
+
+  <!-- v3: download / preparation progress — always at the TOP of the screen -->
+  <div id="dlBar" class="dl-bar hidden" role="status" aria-live="polite">
+    <span id="dlLabel" class="dl-label">Downloading voice…</span>
+    <div class="dl-track"><div id="dlFill" class="dl-fill"></div></div>
+    <span id="dlPct" class="dl-pct">0%</span>
+  </div>
+
+  <!-- v3: loading overlay — visible progress + timeout + retry, never hangs -->
+  <div id="loadOverlay" class="load-overlay hidden">
+    <div class="load-card">
+      <div class="load-spinner" aria-hidden="true"></div>
+      <div id="loadMsg" class="load-msg">Loading…</div>
+      <div class="load-track"><div id="loadFill" class="load-fill"></div></div>
+      <div class="load-actions">
+        <button id="btnLoadRetry" class="primary-btn hidden">↻ Retry</button>
+        <button id="btnLoadCancel" class="tool-btn">Cancel</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ============ HOME SCREEN ============ -->
   <section id="home" class="screen">
@@ -41,13 +64,6 @@
       <button id="btnContinue" class="primary-btn" data-i18n="continue">▶ Continue</button>
     </div>
 
-    <div class="lang-chips" id="langChips">
-      <button class="chip active" data-lang="all" data-i18n="all">All</button>
-      <button class="chip" data-lang="te">తెలుగు</button>
-      <button class="chip" data-lang="hi">हिन्दी</button>
-      <button class="chip" data-lang="en">English</button>
-    </div>
-
     <h2 class="section-title" data-i18n="recentBooks">Recent books</h2>
     <div id="recentList" class="recent-list">
       <div class="empty-note" data-i18n="noBooksYet">No books yet. Open an EPUB or PDF to begin.</div>
@@ -59,6 +75,7 @@
       <input type="file" id="restoreInput" accept=".json,application/json" hidden>
       <button id="btnStorage" class="tool-btn" data-i18n="storage">🗄 Storage</button>
       <button id="btnVoiceSetup" class="tool-btn" data-i18n="voices">🔊 Voices</button>
+      <button id="btnLanguages" class="tool-btn">🌐 Languages</button>
     </div>
     <div id="storagePanel" class="panel hidden"></div>
   </section>
@@ -167,12 +184,6 @@
       <label class="set-row"><span data-i18n="lineSpacing">Line spacing</span>
         <input id="setLineSpacing" type="range" min="1" max="3" step="1" value="2">
       </label>
-      <label class="set-row"><span data-i18n="uiLanguage">App language</span>
-        <select id="setUiLang"><option value="en">English</option><option value="te">తెలుగు</option><option value="hi">हिन्दी</option></select>
-      </label>
-      <label class="set-row"><span data-i18n="voice">Voice</span>
-        <select id="setVoice"><option value="" data-i18n="voiceAuto">Automatic</option></select>
-      </label>
       <label class="set-row"><span data-i18n="speed">Reading speed</span>
         <select id="speedSel" class="speed-sel" aria-label="Speed">
           <option value="0.75">0.75×</option>
@@ -203,7 +214,8 @@
       <label class="set-row"><span data-i18n="highContrast">High contrast</span>
         <input id="setHighContrast" type="checkbox">
       </label>
-      <div class="set-note" id="kokoroNote" data-i18n="kokoroNote">Neural voices in your browser — Kokoro (English/Hindi) + MMS Telugu. First use downloads each voice once, then it works offline.</div>
+      <div class="set-note" id="kokoroNote">Voices in your browser — Kokoro for English/Hindi, Google voice for Telugu. Each voice downloads when you open a book in that language, then it works offline. No device voice or install is needed.</div>
+      <div class="set-note" id="appVersion">Version 3.0.0</div>
       <button id="btnExportHighlights" class="tool-btn" data-i18n="exportHighlights">Export highlights</button>
     </div>
   </div>
@@ -213,6 +225,17 @@
     <div class="sheet-card">
       <div class="sheet-head"><b data-i18n="voices">Voices</b><button id="btnVoiceClose" class="icon-btn">✕</button></div>
       <div id="voicePanel"></div>
+    </div>
+  </div>
+
+  <!-- ============ LANGUAGES DOWNLOAD SHEET (v3) ============
+       Offline voice downloads ONLY — NOT a language picker for reading.
+       Reading language is always auto-detected from the book. -->
+  <div id="langSheet" class="sheet hidden">
+    <div class="sheet-card">
+      <div class="sheet-head"><b>Languages</b><button id="btnLangClose" class="icon-btn">✕</button></div>
+      <p class="set-note">Download a language voice for offline listening. The reading language is always detected automatically from the book — this is only for offline downloads.</p>
+      <div id="langList" class="lang-list"></div>
     </div>
   </div>
 

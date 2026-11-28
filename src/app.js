@@ -1,13 +1,30 @@
 /* =====================================================================
-   Offline EPUB Reader — single-file app (v2.1, neural voices in-browser)
+   Offline EPUB Reader — single-file app (v3, Google voices, no freezes)
    Spec: Offline_EPUB_Reader_App_Requirements.md v3 FINAL
-   v2 changes: Kokoro (English/Hindi) + MMS-TTS (Telugu) run in the
-   browser via CDN-loaded ONNX/WASM — no device voice, no install dialog.
-   v2.1 changes: read-aloud can no longer stall mid-chapter (prefetch queue,
-   per-sentence timeout, skip-on-failure, digits-only lines spoken as Telugu
-   time/numbers); fresh upload starts at Chapter 1 sentence 1; page totals
-   are cached per layout; time-left uses real audio length; PDF worker is
-   inlined; dictionary "search online" is a user-tapped link only.
+   v3 changes (user feedback 2026-11-27):
+   - Telugu voice is GOOGLE Telugu (translate_tts web endpoint), NOT Meta MMS.
+     MMS is deleted entirely. Google audio plays through <audio> (no CORS
+     needed for playback); a Service Worker caches it (opaque) for offline.
+   - Language/voice download starts AUTOMATICALLY the moment a book is
+     selected, with a progress bar at the TOP of the screen. No waiting for
+     Play, no silent failure, retry with backoff, status always visible.
+   - Pause works INSTANTLY at all times — controls are decoupled from
+     synthesis/loading; Pause stops audio and cancels pending work at once.
+   - Slow-connection design: small incremental per-sentence audio, never one
+     huge model for Telugu; UI never blocks on a network fetch.
+   - Telugu text is NEVER split into per-letter spans (that broke conjuncts
+     into achulu/hallulu errors). Highlight is whole-word only.
+   - No language list anywhere: book language is auto-detected only; the
+     app UI language follows the browser. A "Languages" section manages
+     offline voice downloads only (never a reading picker).
+   - Real 3D page-curl turn (a leaf that lifts, curls and settles like paper).
+   - Loading never hangs: visible progress, timeout + clean retry.
+   - Reading text is not selectable (no native OS selection menu while
+     reading); tap-a-word speaks that word.
+   Kept from v2.1: Kokoro en/hi; no device voice, no speechSynthesis, no
+   install dialog; stable page counter/Go; fresh upload starts at sentence 0;
+   premium minimal UI with pinned header; stall fix (times/numbers as Telugu
+   words, skip-on-failure); sentence prefetch; stable time-left.
    ===================================================================== */
 'use strict';
 
@@ -23,11 +40,19 @@ function fmtTime(sec) { sec = Math.max(0, Math.round(sec)); const m = Math.floor
 function fmtDur(sec) { const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60); return h > 0 ? h + 'h ' + m + 'm' : m + ' min'; }
 
 /* ---------------- i18n (app chrome: English / Telugu / Hindi) ---------------- */
+/* The app UI language follows the BROWSER language automatically (no picker).
+   Book language is auto-detected from the book content only. */
 const I18N = {
-  en: { appTitle: 'Offline EPUB Reader', appSub: 'Read or listen to any book — fully offline, free, private.', openBook: '📖 Open a book', openHint: 'EPUB or PDF — the file never leaves your device.', continueListening: 'Continue listening', continue: '▶ Continue', all: 'All', recentBooks: 'Recent books', noBooksYet: 'No books yet. Open an EPUB or PDF to begin.', backup: '⬇ Backup library', restore: '⬆ Restore library', storage: '🗄 Storage', voices: '🔊 Voices', chapters: 'Chapters', bookmarks: 'Bookmarks', highlights: 'Highlights', searchPh: 'Search in book…', gotoPagePh: 'Page #', go: 'Go', playBelow: '▶ Read aloud', settings: 'Settings', theme: 'Theme', themeBook: 'Book page', themeWhite: 'White', themeDark: 'Dark', direction: 'Page direction', dirVertical: 'Vertical scroll', dirHorizontal: 'Horizontal flip', font: 'Font', fontSerif: 'Serif (book)', fontSans: 'Sans (clean)', fontTelugu: 'Telugu', fontSize: 'Font size', lineSpacing: 'Line spacing', uiLanguage: 'App language', voice: 'Voice', voiceAuto: 'Automatic', genre: 'Genre', moodFollow: 'Follow mood', sleepDefault: 'Sleep timer default', off: 'Off', largeText: 'Large text', highContrast: 'High contrast', kokoroNote: 'Neural voices in your browser — Kokoro (English/Hindi) + MMS Telugu. First use downloads each voice once, then it works offline.', exportHighlights: 'Export highlights', nowMood: 'Now:', mood: 'Mood', define: 'Define', hear: '🔊 Hear', highlight: '✎ Highlight', copy: 'Copy' },
-  te: { appTitle: 'ఆఫ్‌లైన్ EPUB రీడర్', appSub: 'ఏ పుస్తకాన్నైనా చదవండి లేదా వినండి — పూర్తిగా ఆఫ్‌లైన్, ఉచితం, ప్రైవేట్.', openBook: '📖 పుస్తకం తెరవండి', openHint: 'EPUB లేదా PDF — ఫైల్ మీ పరికరాన్ని వదలదు.', continueListening: 'వినడం కొనసాగించండి', continue: '▶ కొనసాగించు', all: 'అన్నీ', recentBooks: 'ఇటీవలి పుస్తకాలు', noBooksYet: 'ఇంకా పుస్తకాలు లేవు. ప్రారంభించడానికి EPUB లేదా PDF తెరవండి.', backup: '⬇ లైబ్రరీ బ్యాకప్', restore: '⬆ లైబ్రరీ పునరుద్ధరణ', storage: '🗄 నిల్వ', voices: '🔊 గొంతులు', chapters: 'అధ్యాయాలు', bookmarks: 'బుక్‌మార్కులు', highlights: 'హైలైట్లు', searchPh: 'పుస్తకంలో వెతకండి…', gotoPagePh: 'పేజీ #', go: 'వెళ్ళు', playBelow: '▶ బిగ్గరగా చదవండి', settings: 'సెట్టింగులు', theme: 'థీమ్', themeBook: 'పుస్తక పేజీ', themeWhite: 'తెలుపు', themeDark: 'చీకటి', direction: 'పేజీ దిశ', dirVertical: 'నిలువు స్క్రోల్', dirHorizontal: 'అడ్డంగా తిప్పండి', font: 'ఫాంట్', fontSerif: 'సెరిఫ్ (పుస్తకం)', fontSans: 'సాన్స్ (స్పష్టం)', fontTelugu: 'తెలుగు', fontSize: 'అక్షర పరిమాణం', lineSpacing: 'లైన్ అంతరం', uiLanguage: 'యాప్ భాష', voice: 'గొంతు', voiceAuto: 'ఆటోమేటిక్', genre: 'శైలి', moodFollow: 'మూడ్ అనుసరించు', sleepDefault: 'స్లీప్ టైమర్', off: 'ఆపివేయి', largeText: 'పెద్ద అక్షరాలు', highContrast: 'అధిక కాంట్రాస్ట్', kokoroNote: 'బ్రౌజర్‌లో న్యూరల్ వాయిస్‌లు — Kokoro (ఇంగ్లీష్/హిందీ) + MMS తెలుగు. మొదటిసారి ఒకసారి డౌన్‌లోడ్ అవుతుంది, తర్వాత ఆఫ్‌లైన్‌లో పనిచేస్తుంది.', exportHighlights: 'హైలైట్లు ఎగుమతి', nowMood: 'ఇప్పుడు:', mood: 'మూడ్', define: 'అర్థం', hear: '🔊 వినండి', highlight: '✎ హైలైట్', copy: 'కాపీ' },
-  hi: { appTitle: 'ऑफ़लाइन EPUB रीडर', appSub: 'कोई भी किताब पढ़ें या सुनें — पूरी तरह ऑफ़लाइन, मुफ़्त, निजी।', openBook: '📖 किताब खोलें', openHint: 'EPUB या PDF — फ़ाइल आपके डिवाइस से बाहर नहीं जाती।', continueListening: 'सुनना जारी रखें', continue: '▶ जारी रखें', all: 'सभी', recentBooks: 'हाल की किताबें', noBooksYet: 'अभी कोई किताब नहीं। शुरू करने के लिए EPUB या PDF खोलें।', backup: '⬇ लाइब्रेरी बैकअप', restore: '⬆ लाइब्रेरी पुनर्स्थापित करें', storage: '🗄 भंडारण', voices: '🔊 आवाज़ें', chapters: 'अध्याय', bookmarks: 'बुकमार्क', highlights: 'हाइलाइट', searchPh: 'किताब में खोजें…', gotoPagePh: 'पृष्ठ #', go: 'जाएँ', playBelow: '▶ ज़ोर से पढ़ें', settings: 'सेटिंग्स', theme: 'थीम', themeBook: 'किताब का पन्ना', themeWhite: 'सफ़ेद', themeDark: 'अंधेरा', direction: 'पन्ने की दिशा', dirVertical: 'ऊर्ध्व स्क्रॉल', dirHorizontal: 'क्षैतिज पलटें', font: 'फ़ॉन्ट', fontSerif: 'सेरिफ़ (किताब)', fontSans: 'सैन्स (साफ़)', fontTelugu: 'तेलुगु', fontSize: 'अक्षर आकार', lineSpacing: 'पंक्ति अंतर', uiLanguage: 'ऐप भाषा', voice: 'आवाज़', voiceAuto: 'स्वचालित', genre: 'शैली', moodFollow: 'मूड का पालन करें', sleepDefault: 'स्लीप टाइमर', off: 'बंद', largeText: 'बड़े अक्षर', highContrast: 'उच्च कंट्रास्ट', kokoroNote: 'ब्राउज़र में न्यूरल आवाज़ें — Kokoro (English/Hindi) + MMS Telugu. पहली बार एक बार डाउनलोड होती है, फिर ऑफ़लाइन चलती है।', exportHighlights: 'हाइलाइट निर्यात करें', nowMood: 'अभी:', mood: 'मूड', define: 'अर्थ', hear: '🔊 सुनें', highlight: '✎ हाइलाइट', copy: 'कॉपी' }
+  en: { appTitle: 'Offline EPUB Reader', appSub: 'Read or listen to any book — fully offline, free, private.', openBook: '📖 Open a book', openHint: 'EPUB or PDF — the file never leaves your device.', continueListening: 'Continue listening', continue: '▶ Continue', recentBooks: 'Recent books', noBooksYet: 'No books yet. Open an EPUB or PDF to begin.', backup: '⬇ Backup library', restore: '⬆ Restore library', storage: '🗄 Storage', voices: '🔊 Voices', languages: '🌐 Languages', chapters: 'Chapters', bookmarks: 'Bookmarks', highlights: 'Highlights', searchPh: 'Search in book…', gotoPagePh: 'Page #', go: 'Go', playBelow: '▶ Read aloud', settings: 'Settings', theme: 'Theme', themeBook: 'Book page', themeWhite: 'White', themeDark: 'Dark', direction: 'Page direction', dirVertical: 'Vertical scroll', dirHorizontal: 'Horizontal flip', font: 'Font', fontSerif: 'Serif (book)', fontSans: 'Sans (clean)', fontTelugu: 'Telugu', fontSize: 'Font size', lineSpacing: 'Line spacing', voice: 'Voice', genre: 'Genre', moodFollow: 'Follow mood', sleepDefault: 'Sleep timer default', off: 'Off', largeText: 'Large text', highContrast: 'High contrast', voiceNote: 'Voices in your browser — Kokoro (English/Hindi) + Google Telugu. The book\u2019s language is detected automatically; its voice downloads when you open the book.', exportHighlights: 'Export highlights', nowMood: 'Now:', mood: 'Mood', define: 'Define', hear: '🔊 Hear', highlight: '✎ Highlight', copy: 'Copy' },
+  te: { appTitle: 'ఆఫ్‌లైన్ EPUB రీడర్', appSub: 'ఏ పుస్తకాన్నైనా చదవండి లేదా వినండి — పూర్తిగా ఆఫ్‌లైన్, ఉచితం, ప్రైవేట్.', openBook: '📖 పుస్తకం తెరవండి', openHint: 'EPUB లేదా PDF — ఫైల్ మీ పరికరాన్ని వదలదు.', continueListening: 'వినడం కొనసాగించండి', continue: '▶ కొనసాగించు', recentBooks: 'ఇటీవలి పుస్తకాలు', noBooksYet: 'ఇంకా పుస్తకాలు లేవు. ప్రారంభించడానికి EPUB లేదా PDF తెరవండి.', backup: '⬇ లైబ్రరీ బ్యాకప్', restore: '⬆ లైబ్రరీ పునరుద్ధరణ', storage: '🗄 నిల్వ', voices: '🔊 గొంతులు', languages: '🌐 భాషలు', chapters: 'అధ్యాయాలు', bookmarks: 'బుక్‌మార్కులు', highlights: 'హైలైట్లు', searchPh: 'పుస్తకంలో వెతకండి…', gotoPagePh: 'పేజీ #', go: 'వెళ్ళు', playBelow: '▶ బిగ్గరగా చదవండి', settings: 'సెట్టింగులు', theme: 'థీమ్', themeBook: 'పుస్తక పేజీ', themeWhite: 'తెలుపు', themeDark: 'చీకటి', direction: 'పేజీ దిశ', dirVertical: 'నిలువు స్క్రోల్', dirHorizontal: 'అడ్డంగా తిప్పండి', font: 'ఫాంట్', fontSerif: 'సెరిఫ్ (పుస్తకం)', fontSans: 'సాన్స్ (స్పష్టం)', fontTelugu: 'తెలుగు', fontSize: 'అక్షర పరిమాణం', lineSpacing: 'లైన్ అంతరం', voice: 'గొంతు', genre: 'శైలి', moodFollow: 'మూడ్ అనుసరించు', sleepDefault: 'స్లీప్ టైమర్', off: 'ఆపివేయి', largeText: 'పెద్ద అక్షరాలు', highContrast: 'అధిక కాంట్రాస్ట్', voiceNote: 'బ్రౌజర్‌లో గొంతులు — Kokoro (ఇంగ్లీష్/హిందీ) + Google తెలుగు. పుస్తక భాష ఆటోమేటిక్‌గా గుర్తించబడుతుంది; దాని గొంతు పుస్తకం తెరవగానే డౌన్‌లోడ్ అవుతుంది.', exportHighlights: 'హైలైట్లు ఎగుమతి', nowMood: 'ఇప్పుడు:', mood: 'మూడ్', define: 'అర్థం', hear: '🔊 వినండి', highlight: '✎ హైలైట్', copy: 'కాపీ' },
+  hi: { appTitle: 'ऑफ़लाइन EPUB रीडर', appSub: 'कोई भी किताब पढ़ें या सुनें — पूरी तरह ऑफ़लाइन, मुफ़्त, निजी।', openBook: '📖 किताब खोलें', openHint: 'EPUB या PDF — फ़ाइल आपके डिवाइस से बाहर नहीं जाती।', continueListening: 'सुनना जारी रखें', continue: '▶ जारी रखें', recentBooks: 'हाल की किताबें', noBooksYet: 'अभी कोई किताब नहीं। शुरू करने के लिए EPUB या PDF खोलें।', backup: '⬇ लाइब्रेरी बैकअप', restore: '⬆ लाइब्रेरी पुनर्स्थापित करें', storage: '🗄 भंडारण', voices: '🔊 आवाज़ें', languages: '🌐 भाषाएँ', chapters: 'अध्याय', bookmarks: 'बुकमार्क', highlights: 'हाइलाइट', searchPh: 'किताब में खोजें…', gotoPagePh: 'पृष्ठ #', go: 'जाएँ', playBelow: '▶ ज़ोर से पढ़ें', settings: 'सेटिंग्स', theme: 'थीम', themeBook: 'किताब का पन्ना', themeWhite: 'सफ़ेद', themeDark: 'अंधेरा', direction: 'पन्ने की दिशा', dirVertical: 'ऊर्ध्व स्क्रॉल', dirHorizontal: 'क्षैतिज पलटें', font: 'फ़ॉन्ट', fontSerif: 'सेरिफ़ (किताब)', fontSans: 'सैन्स (साफ़)', fontTelugu: 'तेलुगु', fontSize: 'अक्षर आकार', lineSpacing: 'पंक्ति अंतर', voice: 'आवाज़', genre: 'शैली', moodFollow: 'मूड का पालन करें', sleepDefault: 'स्लीप टाइमर', off: 'बंद', largeText: 'बड़े अक्षर', highContrast: 'उच्च कंट्रास्ट', voiceNote: 'ब्राउज़र में आवाज़ें — Kokoro (English/Hindi) + Google Telugu. किताब की भाषा अपने आप पहचानी जाती है; उसकी आवाज़ किताब खोलते ही डाउनलोड होती है।', exportHighlights: 'हाइलाइट निर्यात करें', nowMood: 'अभी:', mood: 'मूड', define: 'अर्थ', hear: '🔊 सुनें', highlight: '✎ हाइलाइट', copy: 'कॉपी' }
 };
+function browserUiLang() {
+  const l = (navigator.language || 'en').toLowerCase();
+  if (l.indexOf('te') === 0) return 'te';
+  if (l.indexOf('hi') === 0) return 'hi';
+  return 'en';
+}
 function t(key) { const lang = settings.uiLang || 'en'; return (I18N[lang] && I18N[lang][key]) || I18N.en[key] || key; }
 function applyI18n() {
   $$('[data-i18n]').forEach(n => { n.textContent = t(n.dataset.i18n); });
@@ -37,13 +62,13 @@ function applyI18n() {
 
 /* ---------------- settings (localStorage) ---------------- */
 const SETTINGS_KEY = 'epubreader.settings.v1';
-const defaults = { theme: 'book', direction: 'vertical', font: 'serif', fontSize: 3, lineSpacing: 2, uiLang: 'en', voicePick: {}, genre: 'thriller', moodFollow: true, sleepDefault: 0, largeText: false, highContrast: false };
+const defaults = { theme: 'book', direction: 'horizontal', font: 'serif', fontSize: 3, lineSpacing: 2, uiLang: 'en', genre: 'thriller', moodFollow: true, sleepDefault: 0, largeText: false, highContrast: false };
 let settings = Object.assign({}, defaults);
 try { const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); settings = Object.assign({}, defaults, s); } catch (e) {}
 function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {} }
 
-/* ---------------- IndexedDB (book bytes + chapter cache) ---------------- */
-const DB_NAME = 'epubreader', DB_VER = 1;
+/* ---------------- IndexedDB (book bytes + chapter cache + audio cache) ---------------- */
+const DB_NAME = 'epubreader', DB_VER = 2;
 let dbPromise = null;
 function openDB() {
   if (dbPromise) return dbPromise;
@@ -53,6 +78,7 @@ function openDB() {
       const db = req.result;
       if (!db.objectStoreNames.contains('books')) db.createObjectStore('books', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('chapters')) db.createObjectStore('chapters', { keyPath: 'key' });
+      if (!db.objectStoreNames.contains('audio')) db.createObjectStore('audio', { keyPath: 'key' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -64,6 +90,7 @@ function idbGet(store, key) { return openDB().then(db => new Promise((res, rej) 
 function idbDelete(store, key) { return openDB().then(db => new Promise((res, rej) => { const tx = db.transaction(store, 'readwrite'); tx.objectStore(store).delete(key); tx.oncomplete = res; tx.onerror = () => rej(tx.error); })); }
 function idbAll(store) { return openDB().then(db => new Promise((res, rej) => { const req = db.transaction(store).objectStore(store).getAll(); req.onsuccess = () => res(req.result || []); req.onerror = () => rej(req.error); })); }
 function idbCountChapters(bookId) { return idbAll('chapters').then(all => all.filter(c => c.key.indexOf(bookId + '::') === 0).length); }
+function idbClearAudioForBook(bookId) { return idbAll('audio').then(async all => { for (const r of all.filter(r => r.key.indexOf(bookId + '::') === 0)) await idbDelete('audio', r.key).catch(() => {}); }); }
 
 /* ---------------- library index (localStorage) ---------------- */
 const LIB_KEY = 'epubreader.library.v1';
@@ -74,23 +101,23 @@ function bookIdFor(title, author) { return 'b' + Math.abs([...(title + '|' + aut
 
 /* ---------------- global state ---------------- */
 const state = {
-  book: null,            // epub.js book object (EPUB) or null (PDF)
-  bookType: null,        // 'epub' | 'pdf'
-  meta: null,            // {id,title,author,subtitle,language,description,coverUrl}
-  chapters: [],          // [{title, href, spineIndex, kind, mood}]
+  book: null,
+  bookType: null,
+  meta: null,
+  chapters: [],
   currentChapter: 0,
-  paragraphs: [],        // current chapter paragraphs [{html, text}]
-  sentences: [],         // current chapter sentences [{text, paraIdx, mood}]
+  paragraphs: [],
+  sentences: [],
   sentenceIndex: 0,
   playing: false,
   speaking: false,
   speed: 1,
   mood: 'neutral',
-  pages: [],             // horizontal mode pages: [{startPara, endPara}]
+  pages: [],
   currentPage: 0,
   totalPages: 0,
-  pageTotal: 0,          // v2.1: cached vertical-mode page total (see cachedPageTotal)
-  pageTotalKey: '',      // v2.1: layout key the cached total belongs to
+  pageTotal: 0,
+  pageTotalKey: '',
   cacheCount: 0,
   preloadIdx: -1,
   preloadBusy: false,
@@ -103,10 +130,10 @@ const state = {
   sleepEndsAt: 0,
   lastSpokenAt: 0,
   avgSentenceSec: 4,
-  perBook: {},           // per-book settings overrides
+  perBook: {},
   resumeRecap: null,
-  pdfPages: null,        // for PDF books: array of page texts
-  searchIndex: [],       // [{chapter, text}]
+  pdfPages: null,
+  searchIndex: [],
 };
 let pauseTimer = null;
 
@@ -144,48 +171,60 @@ function setMood(name, announce) {
   if (announce) toast('Mood: ' + m.label);
 }
 
-/* ---------------- neural TTS engine (v2) — Kokoro en/hi + MMS te ---------------- */
-// ALL narration uses in-browser neural voices. No device speechSynthesis voice
-// is used anywhere in v2, and no "install a voice on your device" dialog exists.
-//  - English / Hindi: Kokoro-82M via kokoro-js (CDN, model cached after 1st download).
-//  - Telugu: MMS-TTS (facebook/mms-tts-tel) ONNX via @huggingface/transformers
-//    (CDN, model cached after 1st download). MMS is a single-speaker VITS voice:
-//    clear and intelligible, but flat/monotone — not as expressive as Kokoro.
-//    That quality limit is stated honestly in the UI and the release notes.
-// Models download once (needs internet that one time) and are then cached by the
-// libraries (Cache API / IndexedDB), so narration works offline afterwards.
-// If a model is not cached and there is no internet, narration shows a clear
-// message and does NOT fall back to a device voice.
+/* ---------------- TTS engine (v3) ---------------- */
+// English/Hindi: Kokoro-82M via kokoro-js. Synthesis runs in a Web Worker
+// when possible (the UI never freezes); falls back to the main thread.
+// Telugu: GOOGLE Telugu voice (translate_tts web endpoint) — clear, natural,
+// no device install, no huge model. Audio plays through <audio> elements
+// (media playback needs no CORS); a Service Worker caches the audio so
+// repeat listens work offline. MMS is gone entirely — no Meta voice anywhere.
+// NO device speechSynthesis voice is used anywhere, and no "install a voice
+// on your device" dialog exists.
+// PAUSE IS DECOUPLED: Play/Pause handlers are synchronous and never await
+// synthesis or a download. Pause stops the audio element at once, bumps the
+// tokens (cancelling every in-flight fetch/synthesis), and returns
+// immediately — it works even while a voice is still loading.
 
 const NEURAL = {
-  kokoro: null, kokoroLoading: null,       // KokoroTTS instance / in-flight promise
-  mms: null, mmsLoading: null,             // transformers.js text-to-speech pipeline
-  audioEl: null,                           // single <audio> element for playback
+  kokoro: null, kokoroLoading: null,
+  kokoroWorker: null, kokoroWorkerFailed: false, kokoroWorkerReady: null,
+  kokoroWorkerSeq: 0, kokoroWorkerPending: new Map(),
+  audioEl: null,                 // single <audio> for Kokoro (PCM) playback
   wordTimer: null,
-  playToken: 0,                            // bump to cancel in-flight playback
-  prefetch: new Map(),                     // "chapter:sentence" -> {samples, sampleRate} | Promise
-  prefetchToken: 0,                        // bump to cancel in-flight prefetch
-  narrationToken: 0,                       // bump to invalidate a stale narration loop
-  consecFail: 0,                           // consecutive sentence synthesis failures
-  status: '',                              // short status line for the UI
+  playToken: 0,                  // bump to cancel in-flight playback
+  prefetch: new Map(),           // Kokoro "chapter:sentence" -> clip | Promise
+  prefetchToken: 0,              // bump to cancel in-flight prefetch
+  narrationToken: 0,             // bump to invalidate a stale narration loop
+  consecFail: 0,
+  status: '',
+  abortCtl: null,                // aborts the in-flight Google fetch
 };
-// v2.1: synthesis must never hang or kill playback. One synthesis call gets
-// at most SYNTH_TIMEOUT_MS; a sentence that still fails is SKIPPed (never a
-// full stop), and the next sentences are synthesized ahead while the current
-// one plays, so there are no long silences between utterances.
 const SYNTH_TIMEOUT_MS = 45000;
 const PREFETCH_AHEAD = 2;
 const MAX_CHUNK_CHARS = 180;
 const MAX_CONSEC_FAIL = 3;
 const KOKORO_MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX';
-const MMS_TEL_MODEL = 'ravivarmapatturi/vayyuedge-mms-tts-tel-onnx';
 const KOKORO_VOICES = {
   en: ['af_bella', 'af_heart', 'af_sky', 'am_adam', 'am_michael'],
   hi: ['hf_alpha', 'hf_beta', 'hm_omega', 'hm_psi'],
 };
-const MMS_SAMPLE_RATE = 16000;
 const KOKORO_SAMPLE_RATE = 24000;
+/* Google Telugu: per-sentence audio, small and incremental. One sentence is
+   ~10–30 KB — it downloads in seconds even on a slow connection, unlike a
+   115 MB model that never finishes. */
+const GT_CHUNK_CHARS = 150;
+const GT_MIN_GAP_MS = 300;        // throttle between Google requests (no 403)
+const GT_FETCH_TIMEOUT_MS = 60000; // a slow connection gets a full minute
+const GT_CHARS_PER_SEC = 10.5;    // measured: ~130 chars -> ~11.4s of audio
+let gtLastFetchAt = 0;
 
+function langCode(lang) { return (lang || 'en').toLowerCase().slice(0, 2); }
+function neuralVoiceFor(lang) {
+  const code = langCode(lang);
+  if (code === 'hi') return 'hf_alpha';
+  return 'af_bella';
+}
+function hasVoiceFor(lang) { return ['en', 'hi', 'te'].indexOf(langCode(lang)) >= 0; }
 function neuralAudioEl() {
   if (!NEURAL.audioEl) {
     const a = document.createElement('audio');
@@ -196,20 +235,7 @@ function neuralAudioEl() {
   }
   return NEURAL.audioEl;
 }
-function defaultKokoroNote() {
-  return 'Neural voices in your browser — Kokoro (English/Hindi) + MMS Telugu. First use downloads each voice once, then it works offline.';
-}
-function setNeuralStatus(msg) {
-  NEURAL.status = msg || '';
-  const n = $('#kokoroNote');
-  if (n) n.textContent = msg || defaultKokoroNote();
-  updateVoicePanel();
-  // v2.1: surface the download state in the reader's audio bar too, so the
-  // first Play shows "Downloading voice…" instead of unexplained silence.
-  updateAudioBar();
-}
 function floatToWavBlob(samples, sampleRate) {
-  // Encode Float32 PCM (-1..1) as 16-bit WAV.
   const n = samples.length;
   const buf = new ArrayBuffer(44 + n * 2);
   const v = new DataView(buf);
@@ -224,6 +250,134 @@ function floatToWavBlob(samples, sampleRate) {
     v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
   }
   return new Blob([buf], { type: 'audio/wav' });
+}
+
+/* ---------------- top download bar (v3) ---------------- */
+/* One slim bar pinned to the very TOP of the screen. It shows what is
+   downloading (voice / chapter audio) and its progress, so the user never
+   has to hunt in Settings — and never wonders whether anything is happening. */
+const DL = { active: false, label: '', done: 0, total: 0, lastPaint: 0 };
+function setDlProgress(label, done, total) {
+  const bar = $('#dlBar'); if (!bar) return;
+  DL.active = true; DL.label = label || ''; DL.done = done || 0; DL.total = total || 0;
+  const now = performance.now();
+  if (now - DL.lastPaint < 150 && done < total) return; // throttle DOM writes
+  DL.lastPaint = now;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  $('#dlLabel').textContent = label + (total > 0 ? ' — ' + done + '/' + total : '');
+  $('#dlFill').style.width = pct + '%';
+  $('#dlPct').textContent = pct + '%';
+  bar.classList.remove('hidden');
+}
+function setDlMessage(label, pct) {
+  const bar = $('#dlBar'); if (!bar) return;
+  DL.active = true; DL.label = label || '';
+  $('#dlLabel').textContent = label;
+  // pct is the HONEST progress (a failure message must not show a full bar)
+  $('#dlFill').style.width = (pct != null ? clamp(pct, 0, 100) : 100) + '%';
+  $('#dlPct').textContent = pct != null ? Math.round(pct) + '%' : '';
+  bar.classList.remove('hidden');
+}
+function hideDlBar() {
+  const bar = $('#dlBar'); if (!bar) return;
+  DL.active = false;
+  bar.classList.add('hidden');
+}
+function setNeuralStatus(msg) {
+  NEURAL.status = msg || '';
+  const n = $('#kokoroNote');
+  if (n) n.textContent = msg || 'Voices in your browser — Kokoro (English/Hindi) + Google Telugu. The book\u2019s language is detected automatically; its voice downloads when you open the book.';
+  updateVoicePanel();
+  updateAudioBar();
+}
+
+/* ---------------- Kokoro in a Web Worker (v3) ---------------- */
+/* Synthesis runs off the main thread so the UI never freezes while Kokoro
+   thinks. If the worker cannot start or fails, the main thread takes over
+   (v2.1 behaviour) — the app keeps working either way. */
+const KOKORO_WORKER_SRC = `
+let model = null;
+self.onmessage = async function (e) {
+  var d = e.data || {};
+  try {
+    if (d.type === 'load') {
+      var mod = await import('https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm');
+      model = await mod.KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX', {
+        dtype: 'q8', device: 'wasm',
+        progress_callback: function (p) { try { self.postMessage({ type: 'progress', loaded: p.loaded || 0, total: p.total || 0 }); } catch (err) {} }
+      });
+      self.postMessage({ type: 'loaded', id: d.id });
+    } else if (d.type === 'synth') {
+      if (!model) throw new Error('kokoro not loaded');
+      var audio = await model.generate(d.text, { voice: d.voice, speed: d.speed || 1 });
+      var arr = audio.audio;
+      self.postMessage({ type: 'audio', id: d.id, audio: arr, sampling_rate: audio.sampling_rate }, [arr.buffer]);
+    }
+  } catch (err) {
+    self.postMessage({ type: 'error', id: d.id, error: String((err && err.message) || err) });
+  }
+};
+`;
+function kokoroWorkerStart() {
+  if (NEURAL.kokoroWorkerFailed) return null;
+  if (NEURAL.kokoroWorker) return NEURAL.kokoroWorker;
+  try {
+    const blob = new Blob([KOKORO_WORKER_SRC], { type: 'text/javascript' });
+    const url = URL.createObjectURL(blob);
+    const w = new Worker(url, { type: 'module' });
+    w.onmessage = (e) => {
+      const d = e.data || {};
+      if (d.type === 'progress') { setDlProgress('Downloading Kokoro voice', d.loaded || 0, d.total || 0); return; }
+      const p = NEURAL.kokoroWorkerPending.get(d.id);
+      if (!p) return;
+      NEURAL.kokoroWorkerPending.delete(d.id);
+      if (d.type === 'error') p.reject(new Error(d.error || 'worker error'));
+      else if (d.type === 'loaded') p.resolve(true);
+      else if (d.type === 'audio') p.resolve({ samples: d.audio, sampleRate: d.sampling_rate || KOKORO_SAMPLE_RATE });
+    };
+    w.onerror = () => kokoroWorkerFail(new Error('Kokoro worker error'));
+    NEURAL.kokoroWorker = w;
+    return w;
+  } catch (e) {
+    NEURAL.kokoroWorkerFailed = true;
+    return null;
+  }
+}
+function kokoroWorkerFail(err) {
+  NEURAL.kokoroWorkerFailed = true;
+  NEURAL.kokoroWorkerReady = null;
+  NEURAL.kokoroWorkerPending.forEach(p => p.reject(err || new Error('Kokoro worker failed')));
+  NEURAL.kokoroWorkerPending.clear();
+  if (NEURAL.kokoroWorker) { try { NEURAL.kokoroWorker.terminate(); } catch (e) {} NEURAL.kokoroWorker = null; }
+}
+function kokoroWorkerCall(msg, timeoutMs) {
+  const w = kokoroWorkerStart();
+  if (!w) return Promise.reject(new Error('worker unavailable'));
+  const id = ++NEURAL.kokoroWorkerSeq;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      NEURAL.kokoroWorkerPending.delete(id);
+      reject(new Error('Kokoro worker timed out'));
+    }, timeoutMs || 60000);
+    NEURAL.kokoroWorkerPending.set(id, {
+      resolve: (v) => { clearTimeout(timer); resolve(v); },
+      reject: (e) => { clearTimeout(timer); reject(e); },
+    });
+    try { w.postMessage(Object.assign({ id }, msg)); }
+    catch (e) { NEURAL.kokoroWorkerPending.delete(id); clearTimeout(timer); reject(e); }
+  });
+}
+async function ensureKokoroWorker() {
+  if (NEURAL.kokoroWorkerReady) return NEURAL.kokoroWorkerReady;
+  NEURAL.kokoroWorkerReady = (async () => {
+    await kokoroWorkerCall({ type: 'load' }, 180000);
+    return true;
+  })().catch(err => {
+    kokoroWorkerFail(err);
+    NEURAL.kokoroWorkerReady = null;
+    throw err;
+  });
+  return NEURAL.kokoroWorkerReady;
 }
 async function ensureKokoro(progressCb) {
   if (NEURAL.kokoro) return NEURAL.kokoro;
@@ -248,76 +402,175 @@ async function ensureKokoro(progressCb) {
   });
   return NEURAL.kokoroLoading;
 }
-async function ensureMMS(progressCb) {
-  if (NEURAL.mms) return NEURAL.mms;
-  if (NEURAL.mmsLoading) return NEURAL.mmsLoading;
-  setNeuralStatus('Downloading Telugu voice… (one-time, about 115 MB)');
-  NEURAL.mmsLoading = (async () => {
-    const mod = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.2/+esm');
-    const tts = await mod.pipeline('text-to-speech', MMS_TEL_MODEL, {
-      dtype: 'fp32',
-      device: 'wasm',
-      progress_callback: progressCb || null,
-    });
-    NEURAL.mms = tts;
-    setNeuralStatus('');
-    return tts;
-  })().catch(err => {
-    NEURAL.mmsLoading = null;
-    setNeuralStatus('Telugu voice could not load — connect to the internet once to download it.');
-    throw err;
+async function synthesizeKokoro(text, voice, rate, cancelled) {
+  if (!NEURAL.kokoroWorkerFailed) {
+    try {
+      await withTimeout(ensureKokoroWorker(), 180000, 'load Kokoro voice');
+      const res = await kokoroWorkerCall({ type: 'synth', text, voice, speed: rate }, SYNTH_TIMEOUT_MS);
+      if (cancelled && cancelled()) throw new Error('cancelled');
+      return res;
+    } catch (e) {
+      if (cancelled && cancelled()) throw e;
+      kokoroWorkerFail(e); // fall back to the main thread, once
+    }
+  }
+  let tts;
+  try { tts = await withTimeout(ensureKokoro(), SYNTH_TIMEOUT_MS, 'load Kokoro voice'); }
+  catch (e) { const err = new Error('Voice needs one download — connect to the internet once, then it works offline.'); err.voiceLoadFailed = true; throw err; }
+  if (cancelled && cancelled()) throw new Error('cancelled');
+  const audio = await withTimeout(tts.generate(text, { voice, speed: rate }), SYNTH_TIMEOUT_MS, 'synthesize Kokoro');
+  return { samples: audio.audio, sampleRate: audio.sampling_rate || KOKORO_SAMPLE_RATE };
+}
+
+/* ---------------- Google Telugu voice (v3) ---------------- */
+/* Clear, natural Google Telugu via the translate_tts web endpoint.
+   Playback uses <audio> elements (media playback needs no CORS), and a
+   pool of audio elements pre-buffers the next sentences so playback is
+   smooth. A Service Worker (sw.js) caches the audio so repeat listens work
+   offline; if the worker is not active the audio still plays direct. */
+function googleTtsUrl(text, lang) {
+  const params = new URLSearchParams({ ie: 'UTF-8', tl: langCode(lang) === 'hi' ? 'hi' : 'te', client: 'tw-ob', total: '1', idx: '0', textlen: String(text.length), q: text });
+  return 'https://translate.google.com/translate_tts?' + params.toString();
+}
+function gtEstimateSec(text) {
+  const n = String(text || '').length;
+  return Math.max(0.6, n / GT_CHARS_PER_SEC);
+}
+/* Pool of <audio> elements for Google playback + pre-buffering. The element
+   that pre-buffered a sentence is the one that plays it, so the buffered
+   data is actually reused (the browser does not HTTP-cache this endpoint). */
+const GT_POOL = [];
+function gtPoolEl() {
+  let slot = GT_POOL.find(s => !s.busy);
+  if (!slot) {
+    const a = document.createElement('audio');
+    a.preload = 'auto';
+    a.setAttribute('playsinline', '');
+    document.body.appendChild(a);
+    slot = { el: a, key: '', busy: false };
+    GT_POOL.push(slot);
+  }
+  return slot;
+}
+function gtAudioFor(key, url) {
+  let slot = GT_POOL.find(s => s.key === key);
+  if (slot) return slot;
+  slot = gtPoolEl();
+  slot.key = key;
+  slot.busy = true;
+  slot.el.src = url;
+  try { slot.el.load(); } catch (e) {}
+  return slot;
+}
+function gtRelease(slot) {
+  if (!slot) return;
+  slot.busy = false;
+  slot.key = '';
+  try { slot.el.removeAttribute('src'); slot.el.load(); } catch (e) {}
+}
+function gtReleaseAll() {
+  GT_POOL.forEach(s => { try { s.el.pause(); } catch (e) {} gtRelease(s); });
+}
+function gtSentenceKey(chapter, idx) { return (state.meta ? state.meta.id : 'x') + '::' + chapter + '::' + idx; }
+/* Prepare (buffer) one Google sentence in the background. Resolves true
+   when the audio is buffered enough to play, false on failure. Never throws
+   for a single sentence — the caller decides what a failure means. */
+function gtPrepare(key, text, lang) {
+  const url = googleTtsUrl(text, lang);
+  const slot = gtAudioFor(key, url);
+  const a = slot.el;
+  if (a.readyState >= 3) return Promise.resolve(true); // already buffered
+  return new Promise(resolve => {
+    let done = false;
+    const finish = v => { if (done) return; done = true; a.removeEventListener('canplaythrough', onOk); a.removeEventListener('error', onErr); resolve(v); };
+    const onOk = () => finish(true);
+    const onErr = () => finish(false);
+    a.addEventListener('canplaythrough', onOk);
+    a.addEventListener('error', onErr);
+    setTimeout(() => finish(a.readyState >= 2), GT_FETCH_TIMEOUT_MS);
   });
-  return NEURAL.mmsLoading;
 }
-// Which neural voice id to use for a language (honours the user's manual pick).
-function neuralVoiceFor(lang) {
-  const code = langCode(lang);
-  const picked = settings.voicePick && settings.voicePick[code];
-  if (picked) return picked;
-  if (code === 'hi') return 'hf_alpha';
-  if (code === 'te') return 'mms-tel';
-  return 'af_bella';
+/* Play one prepared Google sentence through its pooled audio element.
+   Resolves true when it ends, false if cancelled. Never hangs: a watchdog
+   resolves it from the real duration (or the estimate) if 'ended' never fires. */
+async function gtPlay(slot, text, rate, token) {
+  const a = slot.el;
+  const est = gtEstimateSec(text);
+  const dur = (a.duration && isFinite(a.duration) && a.duration > 0) ? a.duration : est;
+  const playDur = dur / clamp(rate, 0.5, 2);
+  const words = String(text || '').split(/\s+/).filter(Boolean);
+  const perWord = words.length ? playDur / words.length : playDur;
+  clearTimeout(NEURAL.wordTimer);
+  let wi = -1;
+  const startAt = performance.now();
+  const tick = () => {
+    if (token !== NEURAL.playToken) return;
+    const elapsed = (performance.now() - startAt) / 1000;
+    const idx = Math.min(words.length - 1, Math.floor(elapsed / Math.max(0.05, perWord)));
+    if (idx !== wi && idx >= 0) { wi = idx; markWordByIndex(idx); }
+    if (elapsed < playDur + 0.2) NEURAL.wordTimer = setTimeout(tick, 60);
+  };
+  NEURAL.wordTimer = setTimeout(tick, 30);
+  a.playbackRate = clamp(rate, 0.5, 2);
+  try { await a.play(); } catch (e) { clearTimeout(NEURAL.wordTimer); return false; }
+  const finished = await new Promise(res => {
+    let done = false;
+    let watchdog = null;
+    const finish = v => {
+      if (done) return;
+      done = true;
+      clearTimeout(watchdog);
+      a.removeEventListener('ended', onEnd);
+      a.removeEventListener('error', onErr);
+      res(v);
+    };
+    const onEnd = () => finish(true);
+    const onErr = () => finish(false);
+    watchdog = setTimeout(() => finish(true), Math.max(4000, (playDur + 10) * 1000));
+    a.addEventListener('ended', onEnd);
+    a.addEventListener('error', onErr);
+  });
+  clearTimeout(NEURAL.wordTimer);
+  if (token !== NEURAL.playToken) return false;
+  return finished;
 }
-function neuralEngineFor(lang) { return langCode(lang) === 'te' ? 'mms' : 'kokoro'; }
-async function ensureEngineFor(lang) {
-  return neuralEngineFor(lang) === 'mms' ? ensureMMS() : ensureKokoro();
-}
-// Synthesize text to raw PCM without playing it. Returns
-// {samples: Float32Array, sampleRate} (or {empty:true} when the line has
-// nothing speakable after sanitizing). Chunked and timed out, so one bad
-// line can never freeze playback. `cancelled` is polled between chunks.
+
+/* ---------------- unified synthesis + playback ---------------- */
+/* A "clip" is what one sentence becomes before it is played:
+   - Kokoro: {format:'pcm', samples, sampleRate, duration}
+   - Google: {format:'gt', slot, text, duration} (slot = pooled <audio>) */
 async function synthesizeNeural(text, lang, opts) {
   opts = opts || {};
-  const engine = neuralEngineFor(lang);
+  const clean = sanitizeForSpeech(text, lang);
+  if (!hasSpeakable(clean)) return { empty: true };
+  if (langCode(lang) === 'te') {
+    // Google Telugu: one audio element per chunk; chunks play back to back.
+    const chunks = chunkForSpeech(clean, GT_CHUNK_CHARS);
+    const parts = [];
+    for (let i = 0; i < chunks.length; i++) {
+      if (opts.cancelled && opts.cancelled()) throw new Error('cancelled');
+      const key = gtSentenceKey(state.currentChapter, state.sentenceIndex) + '::c' + i;
+      const slot = gtAudioFor(key, googleTtsUrl(chunks[i], lang));
+      parts.push({ slot, text: chunks[i], duration: gtEstimateSec(chunks[i]) });
+      // buffer this chunk now (the narration loop waits for it below)
+      const ok = await gtPrepare(key, chunks[i], lang);
+      if (!ok) { /* a failed chunk is retried on demand by the caller */ }
+      if (opts.cancelled && opts.cancelled()) throw new Error('cancelled');
+    }
+    const duration = parts.reduce((a, p) => a + p.duration, 0);
+    return { format: 'gt', parts, duration };
+  }
+  // Kokoro (English/Hindi)
   const voice = neuralVoiceFor(lang);
   const rate = opts.rate || 1;
-  const clean = sanitizeForSpeech(text, lang);
-  const emptyRate = engine === 'mms' ? MMS_SAMPLE_RATE : KOKORO_SAMPLE_RATE;
-  if (!hasSpeakable(clean)) return { samples: new Float32Array(0), sampleRate: emptyRate, empty: true };
-  const chunks = chunkForSpeech(clean);
-  let sampleRate = emptyRate;
+  const chunks = chunkForSpeech(clean, MAX_CHUNK_CHARS);
   const parts = [];
+  let sampleRate = KOKORO_SAMPLE_RATE;
   for (const chunk of chunks) {
     if (opts.cancelled && opts.cancelled()) throw new Error('cancelled');
-    let samples;
-    if (engine === 'mms') {
-      let tts;
-      try { tts = await withTimeout(ensureMMS(), SYNTH_TIMEOUT_MS, 'load Telugu voice'); }
-      catch (e) { const err = new Error('Voice needs one download — connect to the internet once, then it works offline.'); err.voiceLoadFailed = true; throw err; }
-      if (opts.cancelled && opts.cancelled()) throw new Error('cancelled');
-      const res = await withTimeout(tts(chunk), SYNTH_TIMEOUT_MS, 'synthesize Telugu');
-      samples = res.audio; sampleRate = res.sampling_rate || MMS_SAMPLE_RATE;
-    } else {
-      let tts;
-      try { tts = await withTimeout(ensureKokoro(), SYNTH_TIMEOUT_MS, 'load Kokoro voice'); }
-      catch (e) { const err = new Error('Voice needs one download — connect to the internet once, then it works offline.'); err.voiceLoadFailed = true; throw err; }
-      if (opts.cancelled && opts.cancelled()) throw new Error('cancelled');
-      const audio = await withTimeout(tts.generate(chunk, { voice, speed: rate }), SYNTH_TIMEOUT_MS, 'synthesize Kokoro');
-      samples = audio.audio; sampleRate = audio.sampling_rate || KOKORO_SAMPLE_RATE;
-    }
-    parts.push(samples);
-    // brief silence between chunks so the join sounds like a natural pause
-    parts.push(new Float32Array(Math.floor(sampleRate * 0.12)));
+    const res = await synthesizeKokoro(chunk, voice, rate, opts.cancelled);
+    parts.push(res.samples);
+    sampleRate = res.sampleRate || sampleRate;
     if (opts.cancelled && opts.cancelled()) throw new Error('cancelled');
   }
   let total = 0;
@@ -325,23 +578,35 @@ async function synthesizeNeural(text, lang, opts) {
   const merged = new Float32Array(total);
   let off = 0;
   parts.forEach(a => { merged.set(a, off); off += a.length; });
-  return { samples: merged, sampleRate };
+  return { format: 'pcm', samples: merged, sampleRate, duration: total / sampleRate };
 }
-// Play already-synthesized PCM. Resolves true when the audio ends, false if
-// cancelled. Never hangs: a watchdog resolves it if 'ended' never fires.
-async function playAudioSamples(samples, sampleRate, lang, opts) {
+async function playClip(clip, lang, opts) {
   opts = opts || {};
   const token = ++NEURAL.playToken;
-  const engine = neuralEngineFor(lang);
   const rate = opts.rate || 1;
+  if (clip.format === 'gt') {
+    let allOk = true;
+    for (const part of clip.parts) {
+      if (token !== NEURAL.playToken) return false;
+      // make sure this chunk is buffered before playing it
+      const ready = await gtPrepare(part.slot.key, part.text, lang);
+      if (!ready) { allOk = false; break; }
+      if (token !== NEURAL.playToken) return false;
+      const ok = await gtPlay(part.slot, part.text, rate, token);
+      gtRelease(part.slot);
+      if (!ok) return false;
+    }
+    return allOk;
+  }
+  // Kokoro PCM path (v2.1 behaviour, unchanged)
+  const samples = clip.samples, sampleRate = clip.sampleRate;
   const blob = floatToWavBlob(samples, sampleRate);
   const url = URL.createObjectURL(blob);
   const a = neuralAudioEl();
   const duration = samples.length / sampleRate;
-  const playDur = duration / (engine === 'mms' ? clamp(rate, 0.5, 2) : 1);
+  const playDur = duration;
   const words = String(opts.text || '').split(/\s+/).filter(Boolean);
   const perWord = words.length ? playDur / words.length : playDur;
-  // highlight words on a timer, paced to the (rate-adjusted) audio length
   clearTimeout(NEURAL.wordTimer);
   let wi = -1;
   const startAt = performance.now();
@@ -354,7 +619,7 @@ async function playAudioSamples(samples, sampleRate, lang, opts) {
   };
   NEURAL.wordTimer = setTimeout(tick, 30);
   try {
-    a.playbackRate = engine === 'mms' ? clamp(rate, 0.5, 2) : 1;
+    a.playbackRate = 1;
     a.src = url;
     await a.play();
   } catch (e) {
@@ -375,8 +640,6 @@ async function playAudioSamples(samples, sampleRate, lang, opts) {
     };
     const onEnd = () => finish(true);
     const onErr = () => finish(false);
-    // watchdog: if 'ended' never fires (interrupted element, lost event),
-    // resolve anyway instead of hanging the narration forever.
     watchdog = setTimeout(() => finish(true), Math.max(3000, (playDur + 8) * 1000));
     a.addEventListener('ended', onEnd);
     a.addEventListener('error', onErr);
@@ -386,20 +649,19 @@ async function playAudioSamples(samples, sampleRate, lang, opts) {
   if (token !== NEURAL.playToken) return false;
   return finished;
 }
-// One-off speech (selection "hear", tap-to-hear): synthesize then play.
-// Returns false when cancelled mid-way (caller must not auto-advance).
+/* One-off speech (selection "hear", tap-to-hear): synthesize then play. */
 async function speakNeural(text, lang, opts) {
   opts = opts || {};
   const tokenBefore = NEURAL.playToken;
   const res = await synthesizeNeural(text, lang, opts);
   if (res.empty) return true;
-  if (tokenBefore !== NEURAL.playToken) return false; // paused/stopped while synthesizing
-  return playAudioSamples(res.samples, res.sampleRate, lang, { rate: opts.rate || 1, text });
+  if (tokenBefore !== NEURAL.playToken) return false;
+  return playClip(res, lang, { rate: opts.rate || 1, text });
 }
-// Prefetch: synthesize upcoming sentences in the background while the
-// current one plays, so playback is continuous instead of speak-then-wait.
-// Results are cached per chapter+sentence; a single bad line is dropped from
-// the cache (the on-demand path skips it when its turn comes).
+/* Prefetch: prepare upcoming sentences in the background while the current
+   one plays, so playback is continuous instead of speak-then-wait. For
+   Google that means buffering the next sentences' audio elements; for
+   Kokoro it means synthesizing them ahead. A single bad line is dropped. */
 function prefetchKey(chapter, idx) { return chapter + ':' + idx; }
 function cancelPrefetch() {
   NEURAL.prefetchToken++;
@@ -416,6 +678,17 @@ async function prefetchFrom(startIdx) {
     if (myToken !== NEURAL.prefetchToken || chapter !== state.currentChapter || !state.playing) return;
     const s = state.sentences[idx];
     if (!s || s.image) continue;
+    if (langCode(lang) === 'te') {
+      // Google: buffer the sentence's chunks ahead (cheap, async, off-thread)
+      const clean = sanitizeForSpeech(s.text, lang);
+      if (!hasSpeakable(clean)) continue;
+      const chunks = chunkForSpeech(clean, GT_CHUNK_CHARS);
+      for (let i = 0; i < chunks.length; i++) {
+        const key = gtSentenceKey(chapter, idx) + '::c' + i;
+        gtAudioFor(key, googleTtsUrl(chunks[i], lang));
+      }
+      continue;
+    }
     const key = prefetchKey(chapter, idx);
     if (NEURAL.prefetch.has(key)) continue;
     const cancelled = () => myToken !== NEURAL.prefetchToken || chapter !== state.currentChapter;
@@ -431,15 +704,23 @@ async function prefetchFrom(startIdx) {
     if (myToken !== NEURAL.prefetchToken || chapter !== state.currentChapter || !state.playing) return;
   }
 }
+/* PAUSE / STOP — synchronous, instant, never awaits anything. This is what
+   makes the Play/Pause buttons respond within a tap even while a voice is
+   loading, downloading, or synthesizing (v2.1 froze here on a slow link). */
 function stopNeural() {
   NEURAL.playToken++;
-  NEURAL.narrationToken++;   // invalidate any in-flight narration loop
+  NEURAL.narrationToken++;
   cancelPrefetch();
   clearTimeout(NEURAL.wordTimer);
+  if (NEURAL.abortCtl) { try { NEURAL.abortCtl.abort(); } catch (e) {} NEURAL.abortCtl = null; }
+  gtReleaseAll();
   const a = NEURAL.audioEl;
   if (a) { try { a.pause(); } catch (e) {} a.removeAttribute('src'); try { a.load(); } catch (e) {} }
 }
-// Highlight the word at (0-based) index inside the currently speaking sentence.
+/* Highlight the word at (0-based) index inside the currently speaking
+   sentence. v3: the WHOLE word gets the bounce — the word is one intact
+   text node, never split into per-letter spans, so Telugu conjuncts and
+   vowel signs render exactly as the shaping engine intends. */
 function markWordByIndex(idx) {
   const s = state.sentences[state.sentenceIndex];
   if (!s) return;
@@ -447,51 +728,12 @@ function markWordByIndex(idx) {
   if (!node) return;
   const sent = node.querySelector('.sentence');
   if (!sent) return;
-  const words = s.text.split(/(\s+)/);
-  let vis = -1, targetIdx = -1;
-  for (let i = 0; i < words.length; i++) {
-    if (/^\s+$/.test(words[i])) continue;
-    vis++;
-    if (vis === idx) { targetIdx = i; break; }
-  }
-  if (targetIdx < 0) return;
   const wEls = sent.querySelectorAll('.w');
-  let vis2 = -1;
-  for (let i = 0; i < words.length; i++) {
-    if (/^\s+$/.test(words[i])) continue;
-    vis2++;
-    if (vis2 === idx) {
-      const target = wEls[vis2];
-      if (target && !target.classList.contains('on')) {
-        sent.querySelectorAll('.w.on').forEach(w => w.classList.remove('on'));
-        target.classList.add('on');
-        target.querySelectorAll('.l').forEach((lEl, li) => { lEl.style.animationDelay = (li * 45) + 'ms'; });
-      }
-      break;
-    }
-  }
-}
-
-function langCode(lang) { return (lang || 'en').toLowerCase().slice(0, 2); }
-// v2: every supported language has a neural voice (Kokoro en/hi, MMS te).
-function hasVoiceFor(lang) { return ['en', 'hi', 'te'].indexOf(langCode(lang)) >= 0; }
-// v2: the voice picker lists neural voices for the current book language.
-function refreshVoices() {
-  const sel = $('#setVoice');
-  if (!sel) { updateVoicePanel(); return; }
-  const lang = state.meta ? langCode(state.meta.language) : 'en';
-  const cur = sel.value;
-  sel.innerHTML = '<option value="">' + esc(t('voiceAuto')) + '</option>';
-  const list = lang === 'te' ? ['mms-tel'] : (KOKORO_VOICES[lang] || KOKORO_VOICES.en);
-  list.forEach(id => {
-    const label = id === 'mms-tel' ? 'MMS Telugu (in-browser)' : id + ' (Kokoro)';
-    const o = el('option', null, label);
-    o.value = id; sel.appendChild(o);
-  });
-  const picked = settings.voicePick && settings.voicePick[lang];
-  if (picked) sel.value = picked;
-  else if (cur) sel.value = cur;
-  updateVoicePanel();
+  const target = wEls[idx];
+  if (!target) return;
+  if (target.classList.contains('on')) return;
+  sent.querySelectorAll('.w.on').forEach(w => w.classList.remove('on'));
+  target.classList.add('on');
 }
 
 /* ---------------- language detection (spec §6.1) ---------------- */
@@ -522,7 +764,6 @@ function splitSentences(text) {
   if (!text) return [];
   const clean = String(text).replace(/\s+/g, ' ').trim();
   if (!clean) return [];
-  // Split after . ! ? । … followed by space or end; keep quotes with the sentence.
   const re = /[^.!?।…]+(?:[.!?।…]+["'”’)\]]*)?/g;
   const out = [];
   let m;
@@ -538,7 +779,6 @@ function sentenceMood(s, chapterMood, prevLen) {
   return chapterMood;
 }
 function isReveal(s, prevLen) {
-  // classic reveal rhythm: very short sentence after a long one
   return prevLen > 120 && s.length < 40;
 }
 
@@ -546,21 +786,13 @@ function isReveal(s, prevLen) {
 function prepForSpeech(text, lang) {
   let s = String(text || '');
   s = s.replace(/\[image\]/gi, ' ');
-  s = s.replace(/\[\d+\]/g, ' ');            // footnote markers
+  s = s.replace(/\[\d+\]/g, ' ');
   s = s.replace(/\s+/g, ' ').trim();
   if (langCode(lang) === 'en') {
     s = s.replace(/\bDr\./g, 'Doctor').replace(/\bMr\./g, 'Mister').replace(/\bMrs\./g, 'Missus').replace(/\bSt\./g, 'Saint');
   }
   return s;
 }
-
-/* v2.1 — make a sentence safe for a neural voice before synthesis.
-   Root cause of the v2 stall (live test 2026-11-27): Chapter 1 sentence 87
-   is just `11:17."` — digits + punctuation, no speakable letters. MMS-TTS
-   cannot speak bare digits, and that one line made the pipeline fail, which
-   killed playback and made every re-press of Play fail on the same line.
-   Fix: expand bare times / numbers into spoken Telugu, strip stray quotes,
-   and skip lines that still have nothing speakable. */
 const TE_DIGITS = ['సున్నా', 'ఒకటి', 'రెండు', 'మూడు', 'నాలుగు', 'ఐదు', 'ఆరు', 'ఏడు', 'ఎనిమిది', 'తొమ్మిది'];
 const TE_TENS = { 10: 'పది', 11: 'పదకొండు', 12: 'పన్నెండు', 13: 'పదమూడు', 14: 'పద్నాలుగు', 15: 'పదిహేను', 16: 'పదహారు', 17: 'పదిహేడు', 18: 'పద్దెనిమిది', 19: 'పందొమ్మిది', 20: 'ఇరవై', 30: 'ముప్పై', 40: 'నలభై', 50: 'యాభై', 60: 'అరవై' };
 function teNumber(n) {
@@ -586,8 +818,6 @@ function sanitizeForSpeech(text, lang) {
 function hasSpeakable(text) {
   return /[\u0c00-\u0c7f\u0900-\u097fA-Za-z]/.test(String(text || ''));
 }
-// Split a long sentence into synthesis-sized chunks at clause boundaries,
-// so no single model call is huge or slow.
 function chunkForSpeech(text, maxLen) {
   const max = maxLen || MAX_CHUNK_CHARS;
   if (text.length <= max) return [text];
@@ -624,7 +854,6 @@ function extractParagraphs(doc) {
   let node;
   const blocks = new Set(['P', 'H1', 'H2', 'H3', 'H4', 'BLOCKQUOTE', 'LI', 'DIV']);
   while ((node = walker.nextNode())) {
-    // XMLDocument (epub.js) keeps tagName lowercase ('p'); HTMLDocument uppercases ('P')
     const tag = (node.tagName || '').toUpperCase();
     if (tag === 'SCRIPT' || tag === 'STYLE') continue;
     if (tag === 'IMG') {
@@ -634,7 +863,6 @@ function extractParagraphs(doc) {
       continue;
     }
     if (blocks.has(tag)) {
-      // only leaf-ish blocks: skip a DIV that contains P children
       if (tag === 'DIV' && Array.from(node.getElementsByTagName('*')).some(d => ['p','h1','h2','h3','blockquote','li'].indexOf((d.tagName || '').toLowerCase()) >= 0)) continue;
       const text = (node.textContent || '').replace(/\s+/g, ' ').trim();
       if (!text) continue;
@@ -669,8 +897,6 @@ async function openEpub(arrayBuffer, fileName) {
   const subtitle = (md.description || '').toString().slice(0, 200);
   const lang = normaliseLang(md.language) || null;
   const coverUrl = await getCoverUrl(book).catch(() => null);
-
-  // Build chapter list from navigation TOC, mapped to spine index
   const tocFlat = [];
   (function walk(items) { (items || []).forEach(it => { tocFlat.push(it); if (it.subitems) walk(it.subitems); }); })(book.navigation.toc || []);
   const hrefToSpine = {};
@@ -684,7 +910,6 @@ async function openEpub(arrayBuffer, fileName) {
     seen.add(si);
     chapters.push({ title: (it.label || 'Chapter').trim(), href, spineIndex: si, kind: classifyChapter(it.label, href), mood: null });
   });
-  // Fallback: no TOC — use spine order
   if (!chapters.length) {
     book.spine.items.forEach((it, i) => {
       if (it.linear === 'no') return;
@@ -696,7 +921,6 @@ async function openEpub(arrayBuffer, fileName) {
   state.meta = { id, title, author, subtitle, language: lang || 'en', description: subtitle, coverUrl, fileName };
   state.chapters = chapters;
   state.currentChapter = 0; state.sentenceIndex = 0; state.cacheCount = 0;
-  // detect language from first chapter text if metadata missing
   if (!lang) {
     const first = await loadChapterText(0).catch(() => null);
     if (first) state.meta.language = detectScriptLang(first.paras.map(p => p.text).join(' '));
@@ -734,10 +958,8 @@ async function loadChapterText(chIdx) {
   let paras;
   if (state.bookType === 'epub') {
     const section = state.book.spine.get(ch.spineIndex);
-    // NB: plain section.load() uses XHR and fails on file:// — pass book.load (archive) explicitly
     await section.load(state.book.load.bind(state.book));
     paras = extractParagraphs(section.document);
-    // resolve images
     for (const p of paras) {
       if (p.kind === 'img') p.blobUrl = await resolveImageUrl(state.book, p.src);
     }
@@ -751,7 +973,7 @@ async function loadChapterText(chIdx) {
 }
 async function loadChapter(chIdx, opts) {
   opts = opts || {};
-  cancelPrefetch();   // v2.1: stale prefetch belongs to the old chapter
+  cancelPrefetch();
   const rec = await loadChapterText(chIdx);
   if (!rec) return false;
   state.currentChapter = chIdx;
@@ -764,9 +986,12 @@ async function loadChapter(chIdx, opts) {
     state.pendingSentence = null;
   }
   renderChapter();
+  // v3: wrap the current sentence right away so tap-a-word-to-hear works
+  // before Play is ever pressed (and so the whole-word highlight is visible).
+  buildSentenceSpans();
   updateChapterList();
   updateCacheInfo();
-  updateAudioBar();   // v2 fix: bottom player must show the CURRENT chapter, not the old one
+  updateAudioBar();
   savePosition();
   return true;
 }
@@ -794,7 +1019,6 @@ async function openPdf(arrayBuffer, fileName) {
   const id = bookIdFor(title, author);
   state.book = null; state.bookType = 'pdf'; state.pdfPages = pages;
   const lang = detectScriptLang(pages.slice(0, 3).join(' '));
-  // group pages into chapters of ~6 pages (or fewer at the end)
   const chapters = [];
   const per = 6;
   for (let i = 0; i < pages.length; i += per) {
@@ -857,13 +1081,227 @@ function savePerBookSettings() {
   try { localStorage.setItem('epubreader.pb.' + state.meta.id, JSON.stringify(state.perBook)); } catch (e) {}
 }
 
+/* ---------------- voice preparation: AUTO-DOWNLOAD on book select (v3) ---------------- */
+/* The moment a book is selected, its language's voice starts preparing in
+   the background — no waiting for Play, no manual step. Progress shows on
+   the TOP bar. For Telugu that means buffering the current chapter's audio
+   (small per-sentence downloads, never one huge file). For English/Hindi it
+   means downloading the Kokoro model once. The job never blocks the UI: it
+   is fully async, it retries a failed fetch with backoff, and it can be
+   cancelled (a new book cancels the old job). */
+const VOICE_PREP = { token: 0, lang: '', running: false };
+function langDisplayName(code) {
+  return code === 'te' ? 'Telugu' : code === 'hi' ? 'Hindi' : 'English';
+}
+async function prepareVoiceForBook() {
+  if (!state.meta) return;
+  const lang = langCode(state.meta.language);
+  const myToken = ++VOICE_PREP.token;
+  VOICE_PREP.lang = lang;
+  VOICE_PREP.running = true;
+  try {
+    if (lang === 'te') {
+      await warmChapterAudio(state.currentChapter, myToken, true);
+      if (myToken !== VOICE_PREP.token) return;
+      // keep warming the next chapters quietly (no top bar — the current
+      // chapter is what matters for immediate Play)
+      for (let c = state.currentChapter + 1; c < state.chapters.length; c++) {
+        if (myToken !== VOICE_PREP.token || !state.meta) return;
+        await warmChapterAudio(c, myToken, false).catch(() => {});
+        await sleep(50);
+      }
+    } else {
+      // Kokoro model, once. Progress shows on the top bar.
+      setDlProgress('Downloading ' + langDisplayName(lang) + ' voice', 0, 100);
+      try {
+        await withTimeout(ensureKokoroWorker(), 180000, 'load Kokoro voice');
+        if (myToken !== VOICE_PREP.token) return;
+        setDlMessage(langDisplayName(lang) + ' voice ready');
+        setTimeout(() => { if (myToken === VOICE_PREP.token) hideDlBar(); }, 1200);
+      } catch (e) {
+        // worker failed — the main-thread load is the fallback; it shows its
+        // own status. Never a silent failure, never a device voice.
+        if (myToken !== VOICE_PREP.token) return;
+        setDlMessage('Kokoro voice needs one download — connect to the internet once');
+        setTimeout(() => { if (myToken === VOICE_PREP.token) hideDlBar(); }, 4000);
+      }
+    }
+  } finally {
+    if (myToken === VOICE_PREP.token) VOICE_PREP.running = false;
+  }
+}
+/* Buffer one chapter's Google audio ahead. `showBar` draws the top progress
+   bar; the quiet path (later chapters) only buffers. Returns when the chapter
+   is fully buffered (or the job was cancelled / failed). A failed sentence
+   is retried once after a short backoff; if it still fails the chapter keeps
+   going — one bad line never blocks the rest. */
+async function warmChapterAudio(chIdx, token, showBar) {
+  if (!state.meta || langCode(state.meta.language) !== 'te') return;
+  const rec = await loadChapterText(chIdx).catch(() => null);
+  if (!rec || token !== VOICE_PREP.token) return;
+  const mood = moodOfChapter(state.chapters[chIdx]);
+  const sentences = parasToSentences(rec.paras, mood).filter(s => s.text && !s.image);
+  const total = sentences.length;
+  if (!total) return;
+  const label = 'Downloading Telugu voice — Chapter ' + (chIdx + 1);
+  let ready = 0; // sentences ACTUALLY buffered — a failed fetch never counts
+  // one pass over a list of sentence indices; returns the indices that failed
+  const runPass = async (list) => {
+    const stillFailed = [];
+    for (const i of list) {
+      if (token !== VOICE_PREP.token || !state.meta) return null;
+      const s = sentences[i];
+      const clean = sanitizeForSpeech(s.text, 'te');
+      if (!hasSpeakable(clean)) { ready++; if (showBar) setDlProgress(label, ready, total); continue; }
+      const chunks = chunkForSpeech(clean, GT_CHUNK_CHARS);
+      let ok = true;
+      for (let ci = 0; ci < chunks.length; ci++) {
+        if (token !== VOICE_PREP.token) return null;
+        const key = state.meta.id + '::' + chIdx + '::' + i + '::c' + ci;
+        const got = await gtPrepare(key, chunks[ci], 'te');
+        if (!got) {
+          // retry once after a backoff (slow/flaky link), then move on
+          await sleep(2000);
+          if (token !== VOICE_PREP.token) return null;
+          const got2 = await gtPrepare(key, chunks[ci], 'te');
+          if (!got2) { ok = false; break; }
+        }
+        // throttle so Google never 403s us
+        await sleep(GT_MIN_GAP_MS);
+      }
+      if (ok) { ready++; if (showBar) setDlProgress(label, ready, total); }
+      else stillFailed.push(i);
+      // yield to the UI thread every sentence — the page must stay responsive
+      await sleep(0);
+    }
+    return stillFailed;
+  };
+  if (showBar) setDlProgress(label, 0, total);
+  let failed = await runPass(sentences.map((_, i) => i));
+  if (failed == null) return;
+  if (failed.length && token === VOICE_PREP.token) {
+    // one quiet background retry for the sentences that failed (slow link);
+    // the bar says so honestly while it retries.
+    if (showBar) setDlMessage(label + ' — ' + ready + ' of ' + total + ' ready, retrying the rest…', (ready / total) * 100);
+    await sleep(5000);
+    if (token !== VOICE_PREP.token) return;
+    const failed2 = await runPass(failed);
+    if (failed2 == null) return;
+    failed = failed2;
+  }
+  // true only when EVERYTHING buffered — a partial download must never be
+  // reported as "downloaded" (downloadLanguage relies on this).
+  if (!showBar) return failed.length === 0;
+  if (!failed.length) {
+    setDlMessage('Telugu voice ready — Chapter ' + (chIdx + 1));
+    setTimeout(() => { if (token === VOICE_PREP.token) hideDlBar(); }, 1200);
+  } else {
+    // HONEST failure state: never claim "ready" when it is not. The bar
+    // stays visible at the true % so the user SEES the download did not
+    // finish — the remaining sentences download when he listens.
+    setDlMessage('Telugu voice: ' + ready + ' of ' + total + ' downloaded — connection is slow or offline. The rest will download when you listen.', (ready / total) * 100);
+  }
+  return failed.length === 0;
+}
+
+/* ---------------- Languages download section (v3) ---------------- */
+/* A Languages section manages OFFLINE voice downloads only. It is NOT a
+   language picker — reading language stays auto-detected from the book.
+   Telugu/Hindi/English each show Downloaded / Not downloaded / Downloading
+   with %, plus a Download button (and Remove once downloaded). */
+const LANG_DL_KEY = 'epubreader.langdl.v1';
+function langDlState() {
+  try { return JSON.parse(localStorage.getItem(LANG_DL_KEY) || '{}'); } catch (e) { return {}; }
+}
+function saveLangDlState(s) { try { localStorage.setItem(LANG_DL_KEY, JSON.stringify(s)); } catch (e) {} }
+function langDlStatus(code) {
+  const s = langDlState();
+  if (code === 'te') {
+    // Telugu is "downloaded" when the current book's first chapter audio is buffered
+    return s.te && s.te.downloaded ? 'downloaded' : 'not';
+  }
+  if (NEURAL.kokoro) return 'downloaded';
+  return (s[code] && s[code].downloaded) ? 'downloaded' : 'not';
+}
+async function downloadLanguage(code) {
+  const s = langDlState();
+  if (code === 'te') {
+    // Pre-buffer the current book's audio (or the first chapter if no book).
+    // Progress shows on the top bar; the Service Worker also caches it.
+    if (!state.meta) { toast('Open a book first — Telugu downloads with the book'); return; }
+    setDlProgress('Downloading Telugu voice', 0, 100);
+    const token = ++VOICE_PREP.token;
+    const ok = await warmChapterAudio(state.currentChapter, token, true).catch(() => false);
+    if (ok) {
+      const st = langDlState(); st.te = { downloaded: true, at: Date.now() }; saveLangDlState(st);
+      toast('Telugu voice downloaded for offline');
+    } else {
+      toast('Telugu download did not finish — check your connection and try again');
+    }
+    renderLangList();
+    return;
+  }
+  // Kokoro (English/Hindi): download + cache the model once.
+  setDlProgress('Downloading ' + langDisplayName(code) + ' voice', 0, 100);
+  try {
+    await withTimeout(ensureKokoroWorker(), 180000, 'load Kokoro voice');
+    const st = langDlState(); st[code] = { downloaded: true, at: Date.now() }; saveLangDlState(st);
+    setDlMessage(langDisplayName(code) + ' voice downloaded');
+    setTimeout(hideDlBar, 1200);
+    toast(langDisplayName(code) + ' voice downloaded for offline');
+  } catch (e) {
+    setDlMessage('Download failed — connect to the internet and try again');
+    setTimeout(hideDlBar, 3000);
+    toast('Download failed — check your connection and try again');
+  }
+  renderLangList();
+}
+async function removeLanguage(code) {
+  const s = langDlState();
+  if (code === 'te') {
+    // clear the Service Worker TTS cache + the in-memory pool
+    try {
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: 'clear-tts' });
+      }
+      if (window.caches) { const names = await caches.keys(); for (const n of names) { if (n.indexOf('gtts') === 0) await caches.delete(n); } }
+    } catch (e) {}
+    gtReleaseAll();
+    delete s.te;
+    saveLangDlState(s);
+    toast('Telugu offline voice removed');
+  } else {
+    delete s[code];
+    saveLangDlState(s);
+    toast(langDisplayName(code) + ' offline voice removed');
+  }
+  renderLangList();
+}
+function renderLangList() {
+  const list = $('#langList');
+  if (!list) return;
+  list.innerHTML = '';
+  [['te', 'Telugu', 'Google Telugu voice — clear and natural'], ['hi', 'Hindi', 'Kokoro voice'], ['en', 'English', 'Kokoro voice']].forEach(([code, name, desc]) => {
+    const status = langDlStatus(code);
+    const row = el('div', 'lang-row');
+    const info = el('div', 'lang-info');
+    info.appendChild(el('div', 'lang-name', name));
+    info.appendChild(el('div', 'lang-desc', desc));
+    info.appendChild(el('div', 'lang-status', status === 'downloaded' ? '✓ Downloaded for offline' : 'Not downloaded'));
+    row.appendChild(info);
+    const btn = el('button', 'mini-btn', status === 'downloaded' ? 'Remove' : '⬇ Download');
+    btn.onclick = () => { if (status === 'downloaded') removeLanguage(code); else downloadLanguage(code); };
+    row.appendChild(btn);
+    list.appendChild(row);
+  });
+}
+
 /* ---------------- rendering ---------------- */
 function renderChapter() {
   const content = $('#pageContent');
   content.innerHTML = '';
   content.classList.remove('two-col');
   const ch = state.chapters[state.currentChapter];
-  // the chapter file usually carries its own <h1> (already in paragraphs) — don't print the title twice
   const firstIsTitle = state.paragraphs.length && ['h1','h2','h3'].indexOf(state.paragraphs[0].kind) >= 0 && state.paragraphs[0].text.replace(/\s+/g, ' ').trim() === (ch ? ch.title : '').replace(/\s+/g, ' ').trim();
   if (!firstIsTitle) {
     const h = el('h1', null, ch ? ch.title : '');
@@ -886,12 +1324,9 @@ function renderChapter() {
     node.dataset.para = pi;
     content.appendChild(node);
   });
-  // word-level spans for the current chapter (built lazily per sentence on demand)
   invalidatePageTotal();
   paginate();
   updatePageFooter();
-  // v2.1: measure the page total once layout settles (images/fonts), not on
-  // every scroll. Re-measure when images finish loading.
   scheduleSettle();
   content.querySelectorAll('img').forEach(img => {
     if (!img.complete) img.addEventListener('load', scheduleSettle, { once: true });
@@ -903,9 +1338,8 @@ function paginate() {
   const content = $('#pageContent');
   state.pages = [];
   state.totalPages = 0;
-  invalidatePageTotal();   // v2.1: horizontal totals are re-measured with the pages
+  invalidatePageTotal();
   if (settings.direction !== 'horizontal') { state.totalPages = 1; return; }
-  // measure: walk paragraph nodes, split into pages by height
   const area = $('#flipWrap');
   const pageH = Math.max(200, area.clientHeight - 8);
   const nodes = paraElements();
@@ -922,14 +1356,15 @@ function paginate() {
   state.totalPages = Math.max(1, pages.length);
   showPage(0, true);
 }
+/* v3 — a REAL page turn. The old page becomes a leaf that lifts off the
+   spine, curls over (with a moving shade, like paper bending) and settles,
+   revealing the new page underneath. Not a slide, not a fade. */
 function showPage(idx, instant) {
   const content = $('#pageContent');
   if (settings.direction !== 'horizontal' || !state.pages.length) { content.style.display = ''; state.currentPage = 0; updatePageFooter(); return; }
   idx = clamp(idx, 0, state.pages.length - 1);
   const doShow = () => {
     state.currentPage = idx;
-    const page = $('#pageCurrent');
-    // rebuild page content: heading on page 0 + this page's paragraphs
     content.innerHTML = '';
     if (idx === 0) {
       const ch = state.chapters[state.currentChapter];
@@ -939,11 +1374,29 @@ function showPage(idx, instant) {
     content.scrollTop = 0;
     updatePageFooter();
   };
-  if (instant) { doShow(); return; }
-  const page = $('#pageCurrent');
-  page.classList.remove('flip-in');
-  page.classList.add('flip-out');
-  setTimeout(() => { doShow(); page.classList.remove('flip-out'); page.classList.add('flip-in'); setTimeout(() => page.classList.remove('flip-in'), 480); }, 230);
+  if (instant || idx === state.currentPage) { doShow(); return; }
+  const dir = idx > state.currentPage ? 1 : -1;
+  const wrap = $('#flipWrap');
+  // the turning leaf: a clone of the page as it looks right now
+  const leaf = el('div', 'turn-leaf' + (dir > 0 ? ' fwd' : ' back'));
+  const front = el('div', 'leaf-face leaf-front');
+  const clone = content.cloneNode(true);
+  clone.removeAttribute('id');
+  front.appendChild(clone);
+  front.appendChild(el('div', 'leaf-shade'));
+  const back = el('div', 'leaf-face leaf-back');
+  leaf.appendChild(front);
+  leaf.appendChild(back);
+  wrap.appendChild(leaf);
+  // keep the clone scrolled to the same spot as the real page
+  try { clone.scrollTop = content.scrollTop; } catch (e) {}
+  // swap the real content underneath (hidden by the leaf until it turns)
+  doShow();
+  requestAnimationFrame(() => {
+    leaf.classList.add('turning');
+    leaf.addEventListener('animationend', () => leaf.remove(), { once: true });
+    setTimeout(() => leaf.remove(), 750);
+  });
 }
 function pageForSentence(si) {
   if (settings.direction !== 'horizontal' || !state.pages.length) return 0;
@@ -961,11 +1414,6 @@ function updatePageFooter() {
   const ch = state.chapters[state.currentChapter];
   $('#chapterPos').textContent = ch ? ('Chapter ' + (state.currentChapter + 1) + ' of ' + state.chapters.length) : '';
 }
-// v2.1 — page totals must be STABLE while reading. v2 re-measured
-// scrollHeight/clientHeight on every scroll, so the total jumped (1 -> 11 -> 3)
-// as images loaded and layout shifted. Now the total is measured once per
-// chapter+layout and cached; it only changes when the layout really changes
-// (chapter, direction, window size, font) or after content settles.
 function pageTotalKey() {
   return [state.currentChapter, settings.direction, window.innerWidth, window.innerHeight, settings.fontSize, settings.lineSpacing, settings.font].join('|');
 }
@@ -983,8 +1431,6 @@ function scheduleSettle() {
   settleTimer = setTimeout(settlePageTotal, 250);
 }
 function settlePageTotal() {
-  // Re-measure once layout settles (images/fonts), preserving the reader's
-  // scroll fraction so the view doesn't jump.
   const content = $('#pageContent');
   if (!content || !state.meta) return;
   const frac = (content.scrollHeight > content.clientHeight) ? content.scrollTop / (content.scrollHeight - content.clientHeight) : 0;
@@ -1004,8 +1450,6 @@ function currentScrollPage() {
   const content = $('#pageContent');
   if (!content || !content.clientHeight) return 1;
   const total = cachedPageTotal();
-  // At the very end, show the last page (the last page is often partial,
-  // so floor() alone would never reach it).
   if (content.scrollTop + content.clientHeight >= content.scrollHeight - 2) return total;
   return clamp(Math.floor(content.scrollTop / content.clientHeight) + 1, 1, total);
 }
@@ -1030,9 +1474,15 @@ function updateCacheInfo() {
   n.textContent = state.cacheCount + ' of ' + state.chapters.length + ' chapters saved for offline';
 }
 
-/* ---------------- sentence display: word spans + bounce ---------------- */
+/* ---------------- sentence display: WHOLE-WORD spans only (v3) ---------------- */
+/* v3 — the achulu/hallulu bug. v2.1 split every word into per-LETTER spans
+   (.l) for the bounce, which breaks Telugu complex-script shaping: a
+   conjunct (e.g. క్ష) or a vowel sign detaches from its base letter and the
+   letter renders as a bare vowel or a broken form. The static text looked
+   fine because only the speaking sentence got the letter spans — that is
+   why the error was intermittent. Fix: each word is ONE intact text node
+   inside its .w span. The bounce animates the whole word. */
 function buildSentenceSpans() {
-  // Rebuild the active sentence's paragraph into word/letter spans for bounce highlight.
   const s = state.sentences[state.sentenceIndex];
   if (!s) return;
   const nodes = paraElements();
@@ -1040,7 +1490,6 @@ function buildSentenceSpans() {
   if (!node) return;
   const para = state.paragraphs[s.paraIdx];
   if (!para) return;
-  // find the sentence text inside the paragraph text
   const ptext = para.text;
   const start = ptext.indexOf(s.text);
   if (start < 0) return;
@@ -1052,7 +1501,7 @@ function buildSentenceSpans() {
     if (!part) return;
     if (/^\s+$/.test(part)) { sent.appendChild(document.createTextNode(part)); return; }
     const w = el('span', 'w');
-    [...part].forEach(ch => w.appendChild(el('span', 'l', ch)));
+    w.textContent = part;   // whole word, intact — never split into letters
     sent.appendChild(w);
   });
   frag.appendChild(sent);
@@ -1082,7 +1531,7 @@ function scrollToSentence() {
   if (node && settings.direction === 'vertical') node.scrollIntoView({ block: 'center', behavior: 'smooth' });
 }
 
-/* ---------------- narration engine (v2: neural voices, spec §5) ---------------- */
+/* ---------------- narration engine (v3) ---------------- */
 function currentMoodRule() {
   const s = state.sentences[state.sentenceIndex];
   const moodName = s ? s.mood : state.mood;
@@ -1113,10 +1562,7 @@ async function speakCurrent() {
   setMood(s.mood);
   updateAudioBar();
   const rate = effectiveRate();
-  // Kick off background synthesis of the next sentences so there is no
-  // long silence between utterances (v2 spoke, then waited ~25s per line).
   prefetchFrom(state.sentenceIndex + 1);
-  // Use a prefetched result when ready, else synthesize on demand.
   const key = prefetchKey(state.currentChapter, state.sentenceIndex);
   let res = null;
   try {
@@ -1128,9 +1574,6 @@ async function speakCurrent() {
       res = await synthesizeNeural(s.text, lang, { rate, cancelled: () => !narrAlive(myNarr) });
     }
   } catch (err) {
-    // A voice that could not LOAD (no internet on first use, not cached yet)
-    // is a real blocker: say so plainly and stop — never fall back to a
-    // device voice. A single bad LINE, though, is just skipped (below).
     if (!narrAlive(myNarr)) return;
     if (err && err.voiceLoadFailed) {
       console.warn('Neural voice failed to load:', err);
@@ -1139,9 +1582,6 @@ async function speakCurrent() {
       toast('Voice needs one download — connect to the internet once, then it works offline.');
       return;
     }
-    // One bad line must NOT kill the chapter: skip it and keep going.
-    // (v2 stopped the whole narration here and every re-press of Play
-    // retried the same failing line, so playback could never resume.)
     console.warn('Skipping unspeakable sentence', state.sentenceIndex, err);
     NEURAL.consecFail = (NEURAL.consecFail || 0) + 1;
     if (NEURAL.consecFail >= MAX_CONSEC_FAIL) {
@@ -1159,7 +1599,6 @@ async function speakCurrent() {
   NEURAL.consecFail = 0;
   if (!narrAlive(myNarr)) return;
   if (res.empty) {
-    // Nothing speakable in this line (e.g. a digits-only fragment) — skip it silently.
     clearSentenceSpans();
     state.sentenceIndex++;
     savePosition();
@@ -1167,15 +1606,13 @@ async function speakCurrent() {
     speakCurrent();
     return;
   }
-  // Time-left estimate from REAL audio length, not wall-clock: wall-clock
-  // includes synthesis time, which made the estimate jump (1:32 -> 3:34).
-  const playDur = res.samples.length / res.sampleRate;
+  const playDur = res.duration || 0;
   if (playDur > 0.3) state.avgSentenceSec = state.avgSentenceSec * 0.7 + playDur * 0.3;
   updateAudioBar();
   state.speaking = true;
   let ok = false;
   try {
-    ok = await playAudioSamples(res.samples, res.sampleRate, lang, { rate, text: s.text });
+    ok = await playClip(res, lang, { rate, text: s.text });
   } catch (err) {
     state.speaking = false;
     if (!narrAlive(myNarr)) return;
@@ -1188,9 +1625,7 @@ async function speakCurrent() {
   }
   state.speaking = false;
   if (!narrAlive(myNarr)) return;
-  if (!ok) { // cancelled mid-sentence (pause/stop/skip) — do not auto-advance
-    return;
-  }
+  if (!ok) return;
   const pause = pauseAfterSentence();
   clearSentenceSpans();
   state.sentenceIndex++;
@@ -1198,10 +1633,12 @@ async function speakCurrent() {
   if (state.sentenceIndex >= state.sentences.length) { advanceChapterOrStop(); return; }
   pauseTimer = setTimeout(() => { buildSentenceSpans(); scrollToSentence(); speakCurrent(); }, pause);
 }
+/* Play/Pause are synchronous and instant — they never await a download or a
+   synthesis. Pause stops the audio at once and cancels pending work. */
 function playNarration() {
   if (!state.meta || !state.sentences.length) return;
   if (state.playing) { pauseNarration(); return; }
-  NEURAL.narrationToken++;   // invalidate any stale narration loop
+  NEURAL.narrationToken++;
   NEURAL.consecFail = 0;
   state.playing = true;
   $('#btnPlay').textContent = '⏸';
@@ -1294,30 +1731,23 @@ function updateAudioBar() {
   updateHeader();
   const info = $('#abInfo');
   if (!info || !state.meta) return;
-  // v2.1: while a voice is downloading on first use, say so here instead of
-  // silence — the first Play takes ~30s before any sound on first use.
   if (NEURAL.status) { info.textContent = NEURAL.status; return; }
   const ch = state.chapters[state.currentChapter];
   const total = state.sentences.length || 1;
   const pct = Math.round((state.sentenceIndex / total) * 100);
   $('#abProgressFill').style.width = pct + '%';
-  // v2.1: estimate from real audio length (avgSentenceSec is now audio-only,
-  // not wall-clock incl. synthesis) and round to 5s so the display is stable.
   const remaining = Math.max(0, Math.round(((total - state.sentenceIndex) * state.avgSentenceSec) / 5) * 5);
   info.textContent = (ch ? ch.title : '') + ' · ' + state.sentenceIndex + '/' + total + ' · ' + fmtTime(remaining) + ' left in chapter';
 }
 function timeRemainingBook() {
   let secs = 0;
   for (let i = state.currentChapter; i < state.chapters.length; i++) {
-    secs += 0; // estimated from cached chapter sentence counts where available
+    secs += 0;
   }
   return secs;
 }
-
-/* ---------------- narration order: Title → Subtitle → Author → Intro → chapters (spec §15.9) ---------------- */
 async function playFromStart() {
   if (!state.meta) return;
-  // Build the opening sequence as spoken text, then flow into the intro chapter.
   const m = state.meta;
   const openLines = [];
   if (m.title) openLines.push({ text: m.title, paraIdx: -1, mood: 'neutral' });
@@ -1327,7 +1757,6 @@ async function playFromStart() {
   const firstIdx = nextNarratableChapter(0);
   const target = introIdx >= 0 ? introIdx : (firstIdx != null ? firstIdx : 0);
   await loadChapter(target);
-  // prepend the opening lines to this chapter's queue
   state.sentences = openLines.concat(state.sentences);
   state.sentenceIndex = 0;
   state.playing = true;
@@ -1335,14 +1764,11 @@ async function playFromStart() {
   startSleepTimer();
   speakCurrent();
 }
-
-/* ---------------- rolling background pre-load (spec §15.8) ---------------- */
 async function startPreload() {
   if (!state.meta || state.preloadBusy) return;
   state.preloadBusy = true;
   try {
     let next = state.currentChapter + 1;
-    // continue from where the cache left off
     const done = await idbCountChapters(state.meta.id).catch(() => 0);
     state.cacheCount = done;
     updateCacheInfo();
@@ -1352,7 +1778,6 @@ async function startPreload() {
       state.cacheCount = await idbCountChapters(state.meta.id).catch(() => state.cacheCount + 1);
       updateCacheInfo();
       next++;
-      // never block the UI: yield between chapters
       await sleep(30);
       if (!state.meta) break;
     }
@@ -1369,7 +1794,6 @@ function addBookmark(auto) {
     try { localStorage.setItem('epubreader.auto.' + state.meta.id, JSON.stringify(bm)); } catch (e) {}
     return;
   }
-  // toggle: tapping again at the same spot removes the bookmark instead of duplicating it
   const dup = state.bookmarks.findIndex(b => !b.auto && b.chapter === bm.chapter && b.sentence === bm.sentence);
   if (dup >= 0) {
     state.bookmarks.splice(dup, 1);
@@ -1489,14 +1913,12 @@ function closeDrawer() { $('#drawer').classList.remove('open'); $('#drawerScrim'
 function openDrawer() { $('#drawer').classList.add('open'); $('#drawerScrim').classList.remove('hidden'); }
 
 /* ---------------- library UI ---------------- */
-function renderLibrary(filter) {
+function renderLibrary() {
   const list = $('#recentList');
   if (!list) return;
-  const f = filter || 'all';
-  const items = library.filter(b => f === 'all' || langCode(b.language) === f);
   list.innerHTML = '';
-  if (!items.length) { list.appendChild(el('div', 'empty-note', t('noBooksYet'))); return; }
-  items.forEach(b => {
+  if (!library.length) { list.appendChild(el('div', 'empty-note', t('noBooksYet'))); return; }
+  library.forEach(b => {
     const card = el('button', 'book-card');
     if (b.coverUrl) { const img = el('img', 'book-cover'); img.src = b.coverUrl; img.alt = ''; card.appendChild(img); }
     else card.appendChild(el('div', 'book-cover-ph', '📖'));
@@ -1531,9 +1953,12 @@ async function reopenBook(id) {
   const rec = await idbGet('books', id).catch(() => null);
   if (!rec || !rec.data) { toast('Book file is no longer stored — please open it again'); return; }
   const entry = library.find(b => b.id === id);
+  showLoad('Opening book…', 20);
+  const token = ++loadToken;
   try {
     if (rec.type === 'pdf') await openPdf(rec.data, entry ? entry.title + '.pdf' : 'book.pdf');
     else await openEpub(rec.data, entry ? entry.title + '.epub' : 'book.epub');
+    if (token !== loadToken) return;
     const pos = loadPosition();
     if (pos) {
       await loadChapter(pos.chapter || 0);
@@ -1543,47 +1968,86 @@ async function reopenBook(id) {
     } else {
       await loadChapter(nextNarratableChapter(0) || 0);
     }
+    if (token !== loadToken) return;
+    hideLoad();
     openReader();
     startPreload();
     updateAudioBar();
-  } catch (e) { toast('Could not reopen book: ' + e.message); }
+    prepareVoiceForBook();   // v3: auto-download the book's language
+  } catch (e) { if (token === loadToken) showLoadError('Could not reopen book: ' + e.message); }
 }
 
+/* ---------------- loading overlay (v3): never hangs, always a way out ---------------- */
+let loadToken = 0;
+let lastFile = null;
+function showLoad(msg, pct) {
+  const ov = $('#loadOverlay'); if (!ov) return;
+  ov.classList.remove('hidden');
+  $('#loadMsg').textContent = msg || 'Loading…';
+  $('#loadFill').style.width = (pct || 0) + '%';
+  $('#btnLoadRetry').classList.add('hidden');
+}
+function setLoadProgress(pct, msg) {
+  const ov = $('#loadOverlay'); if (!ov || ov.classList.contains('hidden')) return;
+  if (msg) $('#loadMsg').textContent = msg;
+  $('#loadFill').style.width = (pct || 0) + '%';
+}
+function showLoadError(msg) {
+  const ov = $('#loadOverlay'); if (!ov) return;
+  ov.classList.remove('hidden');
+  $('#loadMsg').textContent = msg;
+  $('#loadFill').style.width = '100%';
+  $('#btnLoadRetry').classList.remove('hidden');
+  toast(msg);
+}
+function hideLoad() {
+  const ov = $('#loadOverlay'); if (ov) ov.classList.add('hidden');
+}
 /* ---------------- open book flow ---------------- */
 async function handleFile(file) {
   if (!file) return;
+  lastFile = file;
   const name = file.name || 'book';
   const isPdf = /\.pdf$/i.test(name) || file.type === 'application/pdf';
   const isEpub = /\.epub$/i.test(name) || file.type === 'application/epub+zip';
   if (!isPdf && !isEpub) { toast('Please pick an EPUB or PDF file'); return; }
-  toast(isPdf ? 'Converting PDF…' : 'Opening book…');
+  const token = ++loadToken;
+  showLoad('Opening ' + (isPdf ? 'PDF' : 'book') + '…', 5);
+  // a stalled load fails CLEANLY after 30s with a retry — it never hangs
+  const loadTimer = setTimeout(() => {
+    if (token === loadToken) showLoadError('Opening is taking too long — your connection may be slow. Try again.');
+  }, 30000);
   try {
     const buf = await file.arrayBuffer();
+    if (token !== loadToken) { clearTimeout(loadTimer); return; }
+    setLoadProgress(30, 'Reading the file…');
+    await sleep(0); // yield so the progress bar actually paints
     let meta;
     if (isPdf) meta = await openPdf(buf, name);
     else meta = await openEpub(buf, name);
-    // store the file bytes for reopening + offline use
+    if (token !== loadToken) { clearTimeout(loadTimer); return; }
+    setLoadProgress(70, 'Building chapters…');
     idbPut('books', { id: meta.id, type: isPdf ? 'pdf' : 'epub', data: buf, title: meta.title }).catch(() => {});
-    // v2.1: a fresh file upload ALWAYS starts at the beginning — never
-    // restore a stale position saved from an earlier session (v2 restored
-    // "Chapter 4 of 21" + sentence 78/101 for a book the user had just
-    // re-uploaded). Resume lives on the library "Continue listening" card,
-    // which uses reopenBook() and is the only path that restores a position.
     try { localStorage.removeItem('epubreader.pos.' + meta.id); } catch (e) {}
     try { localStorage.removeItem('epubreader.auto.' + meta.id); } catch (e) {}
     await loadChapter(nextNarratableChapter(0) || 0);
+    if (token !== loadToken) { clearTimeout(loadTimer); return; }
+    setLoadProgress(100, 'Ready');
+    clearTimeout(loadTimer);
+    hideLoad();
     openReader();
     startPreload();
     updateAudioBar();
-    // v2: voices are in-browser neural (Kokoro en/hi, MMS te) — no device
-    // voice check, no install dialog. The voice downloads once on first Play.
+    prepareVoiceForBook();   // v3: the book's language downloads NOW, top bar
     if (isPdf) {
       toast('PDF converted — starting read-aloud');
       setTimeout(() => playFromStart(), 600);
     }
   } catch (e) {
+    clearTimeout(loadTimer);
+    if (token !== loadToken) return;
     console.error(e);
-    toast('Could not open this file: ' + (e.message || e));
+    showLoadError('Could not open this file: ' + (e.message || e));
   }
 }
 
@@ -1633,7 +2097,7 @@ $('#selectionMenu') && $('#selectionMenu').addEventListener('click', ev => {
   if (act === 'copy') { navigator.clipboard && navigator.clipboard.writeText(selText).catch(() => {}); toast('Copied'); }
   if (act === 'hear') {
     const lang = state.meta ? state.meta.language : 'en';
-    pauseNarration();   // v2.1: never speak over the narration — it would stall the loop
+    pauseNarration();
     speakNeural(selText, lang, { rate: 1 }).catch(() => toast('Voice needs one download — connect to the internet once, then it works offline.'));
   }
   if (act === 'highlight') {
@@ -1654,8 +2118,15 @@ $('#selectionMenu') && $('#selectionMenu').addEventListener('click', ev => {
   window.getSelection().removeAllRanges();
 });
 
-/* ---------------- click-to-hear: tap a paragraph to narrate from there ---------------- */
+/* ---------------- tap-to-hear: tap a WORD to hear it, tap a paragraph to narrate from there ---------------- */
 $('#pageContent').addEventListener('click', ev => {
+  const wEl = ev.target.closest('.w');
+  if (wEl && wEl.textContent) {
+    const lang = state.meta ? state.meta.language : 'en';
+    pauseNarration();
+    speakNeural(wEl.textContent, lang, { rate: 1 }).catch(() => {});
+    return;
+  }
   const sEl = ev.target.closest('.sentence');
   if (sEl) return;
   const p = ev.target.closest('[data-para]');
@@ -1671,7 +2142,7 @@ $('#pageContent').addEventListener('click', ev => {
 
 /* ---------------- backup / restore / storage / voices ---------------- */
 function backupLibrary() {
-  const data = { app: 'offline-epub-reader', version: 1, at: new Date().toISOString(), settings, library, positions: {}, bookmarks: {}, highlights: {} };
+  const data = { app: 'offline-epub-reader', version: 3, at: new Date().toISOString(), settings, library, positions: {}, bookmarks: {}, highlights: {} };
   library.forEach(b => {
     try { data.positions[b.id] = JSON.parse(localStorage.getItem('epubreader.pos.' + b.id) || 'null'); } catch (e) {}
     try { data.bookmarks[b.id] = JSON.parse(localStorage.getItem('epubreader.bm.' + b.id) || '[]'); } catch (e) {}
@@ -1714,6 +2185,7 @@ async function renderStoragePanel() {
       await idbDelete('books', id).catch(() => {});
       const chs = await idbAll('chapters').catch(() => []);
       for (const c of chs.filter(c => c.key.indexOf(id + '::') === 0)) await idbDelete('chapters', c.key).catch(() => {});
+      await idbClearAudioForBook(id).catch(() => {});
       library = library.filter(b => b.id !== id); saveLibrary();
       renderLibrary(); renderContinueCard(); renderStoragePanel();
       toast('Book removed from storage');
@@ -1724,11 +2196,13 @@ function updateVoicePanel() {
   const p = $('#voicePanel');
   if (!p) return;
   const status = NEURAL.status ? '<p class="voice-status">' + esc(NEURAL.status) + '</p>' : '';
+  const cur = state.meta ? langDisplayName(langCode(state.meta.language)) : null;
   p.innerHTML = '<h3>Voices in this browser</h3>' +
+    (cur ? '<p><b>This book (' + esc(cur) + '):</b> ' + (langCode(state.meta.language) === 'te' ? 'Google Telugu voice — clear and natural' : 'Kokoro — ' + esc(neuralVoiceFor(state.meta.language))) + '</p>' : '') +
     '<p><b>English:</b> Kokoro — af_bella (natural, expressive)</p>' +
     '<p><b>Hindi:</b> Kokoro — hf_alpha</p>' +
-    '<p><b>Telugu:</b> MMS-TTS (in-browser) — clear and intelligible, but flat/monotone; not as natural as Kokoro. No device voice or install is needed.</p>' +
-    '<p>Each voice downloads once on first use, then works offline. Nothing is installed on your device.</p>' +
+    '<p><b>Telugu:</b> Google Telugu voice — clear and natural. No device voice or install is needed.</p>' +
+    '<p>Each voice downloads when you open a book in that language, then works offline. Nothing is installed on your device.</p>' +
     status;
 }
 
@@ -1743,7 +2217,6 @@ function openMoodMenu() {
       if (state.chapters[state.currentChapter]) state.chapters[state.currentChapter].mood = name;
       setMood(name, true);
       m.classList.add('hidden');
-      // rebuild sentences with the new mood
       const si = state.sentenceIndex;
       state.sentences = parasToSentences(state.paragraphs, name);
       state.sentenceIndex = clamp(si, 0, Math.max(0, state.sentences.length - 1));
@@ -1787,6 +2260,11 @@ function wire() {
   $('#btnVoiceSetup').onclick = () => { updateVoicePanel(); $('#voiceSheet').classList.remove('hidden'); };
   $('#btnVoiceClose').onclick = () => $('#voiceSheet').classList.add('hidden');
   $('#voiceSheet').addEventListener('click', ev => { if (ev.target.id === 'voiceSheet') ev.target.classList.add('hidden'); });
+  $('#btnLanguages').onclick = () => { renderLangList(); $('#langSheet').classList.remove('hidden'); };
+  $('#btnLangClose').onclick = () => $('#langSheet').classList.add('hidden');
+  $('#langSheet').addEventListener('click', ev => { if (ev.target.id === 'langSheet') ev.target.classList.add('hidden'); });
+  $('#btnLoadRetry').onclick = () => { if (lastFile) { hideLoad(); handleFile(lastFile); } else hideLoad(); };
+  $('#btnLoadCancel').onclick = () => { loadToken++; hideLoad(); };
   $('#speedSel').addEventListener('change', ev => { state.speed = parseFloat(ev.target.value) || 1; savePerBookSettings(); });
   $('#sleepMenu').addEventListener('click', ev => {
     const min = ev.target.dataset && ev.target.dataset.min;
@@ -1811,37 +2289,27 @@ function wire() {
     }
     updatePageFooter();
   };
-  // v2 fix: the page counter must update while the user scrolls (vertical mode).
-  // v1 never listened for scroll, so "Page 1 of 10" stayed stuck.
   let footerRaf = null;
   $('#pageContent').addEventListener('scroll', () => {
     if (footerRaf) return;
     footerRaf = requestAnimationFrame(() => { footerRaf = null; updatePageFooter(); });
   }, { passive: true });
-  $('#langChips').addEventListener('click', ev => {
-    const chip = ev.target.closest('.chip'); if (!chip) return;
-    $$('#langChips .chip').forEach(c => c.classList.remove('active'));
-    chip.classList.add('active');
-    renderLibrary(chip.dataset.lang);
+  // v3: no native selection menu while reading — long-press/drag on the text
+  // must not pop the OS Translate/Copy menu. Tap-to-hear still works.
+  $('#pageContent').addEventListener('contextmenu', ev => ev.preventDefault());
+  document.addEventListener('contextmenu', ev => {
+    if (ev.target && ev.target.closest && ev.target.closest('#pageContent')) ev.preventDefault();
   });
-  // settings controls
   $('#setTheme').addEventListener('change', ev => { settings.theme = ev.target.value; saveSettings(); savePerBookSettings(); applyTheme(); });
   $('#setDirection').addEventListener('change', ev => setDirection(ev.target.value));
   $('#setFont').addEventListener('change', ev => { settings.font = ev.target.value; saveSettings(); savePerBookSettings(); applyFont(); });
   $('#setFontSize').addEventListener('input', ev => { settings.fontSize = parseInt(ev.target.value, 10); saveSettings(); applyFont(); paginate(); });
   $('#setLineSpacing').addEventListener('input', ev => { settings.lineSpacing = parseInt(ev.target.value, 10); saveSettings(); applyFont(); paginate(); });
-  $('#setUiLang').addEventListener('change', ev => { settings.uiLang = ev.target.value; saveSettings(); applyI18n(); refreshVoices(); });
-  $('#setVoice').addEventListener('change', ev => {
-    const lang = state.meta ? langCode(state.meta.language) : 'en';
-    settings.voicePick[lang] = ev.target.value || null;
-    saveSettings();
-  });
   $('#setGenre').addEventListener('change', ev => { settings.genre = ev.target.value; saveSettings(); if (state.meta) { const m = moodOfChapter(state.chapters[state.currentChapter]); setMood(m); } });
   $('#setMoodFollow').addEventListener('change', ev => { settings.moodFollow = ev.target.checked; saveSettings(); setMood(state.mood); });
   $('#setSleepDefault').addEventListener('change', ev => { settings.sleepDefault = parseInt(ev.target.value, 10) || 0; saveSettings(); });
   $('#setLargeText').addEventListener('change', ev => { settings.largeText = ev.target.checked; saveSettings(); applyFont(); });
   $('#setHighContrast').addEventListener('change', ev => { settings.highContrast = ev.target.checked; saveSettings(); applyFont(); });
-  // keyboard shortcuts (desktop)
   document.addEventListener('keydown', ev => {
     if ($('#reader').classList.contains('hidden')) return;
     if (ev.target.tagName === 'INPUT' || ev.target.tagName === 'SELECT' || ev.target.tagName === 'TEXTAREA') return;
@@ -1851,7 +2319,6 @@ function wire() {
     else if (ev.key === 'b' || ev.key === 'B') addBookmark(false);
     else if (ev.key === 'm' || ev.key === 'M') openMoodMenu();
   });
-  // swipe to flip in horizontal mode
   let touchX = null;
   $('#flipWrap').addEventListener('touchstart', ev => { touchX = ev.touches[0].clientX; }, { passive: true });
   $('#flipWrap').addEventListener('touchend', ev => {
@@ -1864,30 +2331,40 @@ function wire() {
   window.addEventListener('resize', () => { if (state.meta && settings.direction === 'horizontal') paginate(); if (state.meta) scheduleSettle(); });
 }
 
+/* ---------------- service worker (offline Google audio cache) ---------------- */
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  try {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  } catch (e) {}
+}
+
 /* ---------------- init ---------------- */
 function init() {
+  // v3: app UI language follows the BROWSER (no picker, no list)
+  settings.uiLang = browserUiLang();
   applyI18n();
   applyTheme();
   applyFont();
   const st = $('#setTheme'); if (st) st.value = settings.theme;
   const sd = $('#setDirection'); if (sd) sd.value = settings.direction;
   const sg = $('#setGenre'); if (sg) sg.value = settings.genre;
-  const su = $('#setUiLang'); if (su) su.value = settings.uiLang;
   const ss = $('#setSleepDefault'); if (ss) ss.value = String(settings.sleepDefault || 0);
   const sm = $('#setMoodFollow'); if (sm) sm.checked = !!settings.moodFollow;
   const sl = $('#setLargeText'); if (sl) sl.checked = !!settings.largeText;
   const sh = $('#setHighContrast'); if (sh) sh.checked = !!settings.highContrast;
+  const ver = $('#appVersion'); if (ver) ver.textContent = 'Version 3.0.0';
   setMood('neutral');
   wire();
-  refreshVoices();
   renderLibrary();
   renderContinueCard();
   showScreen('home');
-  // test hook for the automated harness
+  registerServiceWorker();
   window.__reader = {
     state, settings,
     openEpub, openPdf, handleFile, loadChapter, playNarration, pauseNarration,
-    version: '2.1.0'
+    showPage, nextSentence, prevSentence, buildSentenceSpans,
+    version: '3.0.0'
   };
 }
 document.addEventListener('DOMContentLoaded', init);

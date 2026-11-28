@@ -1,4 +1,8 @@
-/* ===== Offline EPUB Reader v2 — minimal, sleek, premium. Light & fast. =====
+/* ===== Offline EPUB Reader v3 — minimal, sleek, premium. Light & fast. =====
+   v3: Google Telugu voice (no MMS), upfront voice download with top progress
+   bar, real page-curl turn, whole-word highlight (no per-letter spans — keeps
+   Telugu conjunct shaping intact), no language list, instant pause, loading
+   overlay with timeout + retry, no text selection while reading. */
    No glassmorphism, no heavy blur, no big animations. Only cheap
    transform/opacity motion. Per-theme palettes; dark theme never uses
    black font on dark background. */
@@ -73,9 +77,6 @@ button:active { transform: scale(.97); }
 .continue-title { font-weight: 700; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .continue-pos { color: var(--muted); font-size: 13px; }
 .continue-recap { font-size: 13px; font-style: italic; color: var(--muted); margin-top: 6px; }
-.lang-chips { display: flex; gap: 8px; margin: 20px 0 6px; flex-wrap: wrap; }
-.chip { padding: 8px 16px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); min-height: 36px; }
-.chip.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 .section-title { font-size: 13px; margin: 20px 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; font-weight: 700; }
 .recent-list { display: flex; flex-direction: column; gap: 10px; }
 .book-card { display: flex; gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; align-items: center; text-align: left; width: 100%; box-shadow: 0 1px 3px var(--shadow); }
@@ -134,7 +135,12 @@ button:active { transform: scale(.97); }
 .page.flip-in { animation: flipIn .45s ease-out; }
 @keyframes flipOut { from { transform: rotateY(0deg); opacity: 1; } to { transform: rotateY(-72deg); opacity: 0; } }
 @keyframes flipIn { from { transform: rotateY(72deg); opacity: 0; } to { transform: rotateY(0deg); opacity: 1; } }
-.page-content { height: 100%; overflow-y: auto; padding: 24px 22px 44px; max-width: 680px; margin: 0 auto; background: var(--surface); }
+.page-content {
+  height: 100%; overflow-y: auto; padding: 24px 22px 44px; max-width: 680px; margin: 0 auto; background: var(--surface);
+  /* v3: no accidental text selection while reading — the OS Translate/Copy
+     menu must never pop open. Tap-to-hear still works on .w spans. */
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+}
 .page-content.two-col { display: flex; gap: 28px; max-width: 980px; }
 .page-content.two-col .col { flex: 1; min-width: 0; }
 /* Desktop: the page floats as a soft paper card — premium, still cheap. */
@@ -159,11 +165,15 @@ body.font-telugu .rd { font-family: "Noto Sans Telugu", "Noto Serif Telugu", sys
 body.large-text .rd { font-size: calc(var(--fs, 18px) + 6px); }
 body.high-contrast { --text: #000; --bg: #fff; }
 body.high-contrast[data-theme="dark"] { --text: #fff; --bg: #000; }
-/* sentence + word highlight */
+/* sentence + word highlight.
+   v3: the word span holds the WHOLE word as one intact text node — NEVER
+   split a word into per-letter spans (that breaks Telugu conjunct shaping:
+   vowel signs detach, letters render as achulu). The bounce animates the
+   whole word; the shaping engine sees the word untouched. */
 .sentence { border-radius: 5px; padding: 1px 3px; transition: background-color .2s; cursor: pointer; }
 .sentence.speaking { background: var(--speak); }
 .sentence .w { display: inline-block; }
-.sentence .w.on .l { display: inline-block; animation: bounce .32s ease; }
+.sentence .w.on { display: inline-block; animation: bounce .32s ease; color: var(--word); }
 @keyframes bounce { 0% { transform: translateY(0); } 40% { transform: translateY(-3px); } 100% { transform: translateY(0); } }
 .hl-mark { background: var(--highlight); border-radius: 3px; padding: 0 1px; }
 .page-footer { display: flex; justify-content: space-between; padding: 7px 18px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); background: var(--surface); letter-spacing: .02em; }
@@ -201,3 +211,85 @@ body.high-contrast[data-theme="dark"] { --text: #fff; --bg: #000; }
 /* focus mode: hide chrome, keep text */
 body.focus-mode .reader-header, body.focus-mode .audio-bar, body.focus-mode .play-below, body.focus-mode .mood-strip, body.focus-mode .page-footer { display: none; }
 body.focus-mode .page-content { padding-top: 30px; }
+
+/* ---------- v3: top download bar (voice preparation progress) ---------- */
+.dl-bar {
+  display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+  background: var(--header-bg); border-bottom: 1px solid var(--border);
+  font-size: 13px; flex-shrink: 0; z-index: 50;
+}
+.dl-label { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55vw; }
+.dl-track { flex: 1; height: 7px; background: var(--surface2); border-radius: 4px; overflow: hidden; }
+.dl-fill { height: 100%; width: 0%; background: var(--accent); border-radius: 4px; transition: width .25s ease; }
+.dl-pct { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 34px; text-align: right; }
+
+/* ---------- v3: loading overlay (never hangs — progress + retry) ---------- */
+.load-overlay {
+  position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.45); padding: 20px;
+}
+.load-card {
+  background: var(--surface); border-radius: 16px; padding: 26px 22px; width: 100%; max-width: 360px;
+  text-align: center; box-shadow: var(--paper-shadow);
+}
+.load-spinner {
+  width: 40px; height: 40px; margin: 0 auto 16px; border-radius: 50%;
+  border: 4px solid var(--surface2); border-top-color: var(--accent);
+  animation: spin 1s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.load-msg { font-size: 15px; line-height: 1.5; margin-bottom: 14px; }
+.load-track { height: 7px; background: var(--surface2); border-radius: 4px; overflow: hidden; }
+.load-fill { height: 100%; width: 0%; background: var(--accent); border-radius: 4px; transition: width .25s ease; }
+.load-actions { display: flex; gap: 10px; justify-content: center; margin-top: 18px; }
+
+/* ---------- v3: real page-curl turn (turning leaf) ---------- */
+.turn-leaf {
+  position: absolute; inset: 0; z-index: 20; pointer-events: none;
+  transform-origin: left center; transform-style: preserve-3d; will-change: transform;
+  border-radius: 16px; overflow: visible;
+}
+.turn-leaf .leaf-face {
+  position: absolute; inset: 0; border-radius: 16px; overflow: hidden;
+  backface-visibility: hidden; -webkit-backface-visibility: hidden;
+  box-shadow: var(--paper-shadow);
+}
+.turn-leaf .leaf-front { background: var(--surface); }
+.turn-leaf .leaf-back {
+  background: var(--surface2); transform: rotateY(180deg);
+  /* paper back: subtle, slightly darker so the curl reads as a real page */
+  color: var(--muted); display: flex; align-items: center; justify-content: center; font-size: 14px;
+}
+.turn-leaf .leaf-shade {
+  position: absolute; inset: 0; border-radius: 16px; pointer-events: none;
+  background: linear-gradient(to right, rgba(0,0,0,.22), rgba(0,0,0,0) 40%);
+}
+.turn-leaf .leaf-shade.back {
+  background: linear-gradient(to left, rgba(0,0,0,.18), rgba(0,0,0,0) 40%);
+}
+.turn-leaf.fwd { animation: leafFwd .62s cubic-bezier(.32,.72,.35,1) forwards; }
+.turn-leaf.back { animation: leafBack .62s cubic-bezier(.32,.72,.35,1) forwards; }
+@keyframes leafFwd {
+  0% { transform: rotateY(0deg); }
+  100% { transform: rotateY(-180deg); }
+}
+@keyframes leafBack {
+  0% { transform: rotateY(-180deg); }
+  100% { transform: rotateY(0deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .turn-leaf.fwd, .turn-leaf.back { animation-duration: .15s; }
+  .sentence .w.on { animation: none; }
+}
+
+/* ---------- v3: Languages download rows ---------- */
+.lang-list { display: flex; flex-direction: column; gap: 10px; }
+.lang-row {
+  display: flex; align-items: center; gap: 12px; background: var(--bg);
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 12px;
+}
+.lang-info { flex: 1; min-width: 0; }
+.lang-name { font-weight: 700; }
+.lang-status { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.lang-prog { height: 5px; background: var(--surface2); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+.lang-prog i { display: block; height: 100%; background: var(--accent); width: 0%; }
