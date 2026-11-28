@@ -11,9 +11,9 @@
   --radius: 12px;
   --tap: 44px;
 }
-/* Theme: book page (warm cream) — 60% paper, 30% surface, 10% terracotta accent */
+/* Theme: book page (warm cream/peach paper, full-bleed like a real book page) — 60% paper, 30% surface, 10% terracotta accent */
 [data-theme="book"] {
-  --bg: #f3ead3; --surface: #fffdf4; --surface2: #ece1c6;
+  --bg: #f3ead3; --surface: #fdf1d7; --surface2: #ece1c6;
   --text: #2a241c; --muted: #7a6c55; --border: #ddd0b2;
   --accent: #a34a16; --accent-text: #fffaf0;
   --highlight: #ffe9a8; --speak: #ffdf8a; --word: #c07f1f;
@@ -129,24 +129,32 @@ button:active { transform: scale(.97); }
 
 /* ---------- Page area ---------- */
 .page-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
-.flip-wrap { flex: 1; overflow: hidden; position: relative; perspective: 1400px; }
-.page { position: absolute; inset: 0; overflow: hidden; background: var(--bg); transform-origin: left center; backface-visibility: hidden; }
+/* v3.1 — FULL-BLEED page (Play Books reference): the paper fills the whole
+   reading area edge-to-edge. NO box/card border, NO rounded card, NO shadow
+   box. The page IS the screen: warm paper background, generous text margins,
+   clean serif text. The paper colour lives on .flip-wrap/.page so there is
+   no visible boundary; .page-content is transparent and only constrains the
+   text column for readability. */
+/* v3.1: touch-action pan-y lets horizontal drags reach the pointer swipe
+   handler instead of the browser swallowing them as a scroll. */
+.flip-wrap { flex: 1; overflow: hidden; position: relative; perspective: 1400px; background: var(--surface); touch-action: pan-y; }
+.page { position: absolute; inset: 0; overflow: hidden; background: var(--surface); transform-origin: left center; backface-visibility: hidden; }
 .page.flip-out { animation: flipOut .45s ease-in forwards; }
 .page.flip-in { animation: flipIn .45s ease-out; }
 @keyframes flipOut { from { transform: rotateY(0deg); opacity: 1; } to { transform: rotateY(-72deg); opacity: 0; } }
 @keyframes flipIn { from { transform: rotateY(72deg); opacity: 0; } to { transform: rotateY(0deg); opacity: 1; } }
 .page-content {
-  height: 100%; overflow-y: auto; padding: 24px 22px 44px; max-width: 680px; margin: 0 auto; background: var(--surface);
+  height: 100%; overflow-y: auto; padding: 30px 28px 56px; max-width: 680px; margin: 0 auto; background: transparent;
   /* v3: no accidental text selection while reading — the OS Translate/Copy
      menu must never pop open. Tap-to-hear still works on .w spans. */
   user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
 .page-content.two-col { display: flex; gap: 28px; max-width: 980px; }
 .page-content.two-col .col { flex: 1; min-width: 0; }
-/* Desktop: the page floats as a soft paper card — premium, still cheap. */
+/* Desktop: same full-bleed page, just roomier text margins. No card. */
 @media (min-width: 761px) {
-  .page-content { margin: 18px auto; height: calc(100% - 36px); border-radius: 16px; box-shadow: var(--paper-shadow); padding: 34px 44px 48px; }
-  .page-content.two-col { padding: 34px 40px 48px; }
+  .page-content { padding: 44px 52px 64px; }
+  .page-content.two-col { padding: 44px 48px 64px; }
 }
 /* reading typography */
 .rd { font-size: var(--fs, 18px); line-height: var(--lh, 1.7); }
@@ -244,15 +252,20 @@ body.focus-mode .page-content { padding-top: 30px; }
 .load-actions { display: flex; gap: 10px; justify-content: center; margin-top: 18px; }
 
 /* ---------- v3: real page-curl turn (turning leaf) ---------- */
+/* v3.1: the leaf is the FULL-BLEED page itself (no radius, no card shadow).
+   The curl reads through the 3D rotation + a moving shade + a soft edge
+   shadow that only exists while the leaf turns. The keyframes bend the leaf
+   (a slight scaleX pinch at mid-turn) so it reads as paper curling, not a
+   flat card rotating. */
 .turn-leaf {
   position: absolute; inset: 0; z-index: 20; pointer-events: none;
   transform-origin: left center; transform-style: preserve-3d; will-change: transform;
-  border-radius: 16px; overflow: visible;
+  border-radius: 0; overflow: visible;
 }
 .turn-leaf .leaf-face {
-  position: absolute; inset: 0; border-radius: 16px; overflow: hidden;
+  position: absolute; inset: 0; border-radius: 0; overflow: hidden;
   backface-visibility: hidden; -webkit-backface-visibility: hidden;
-  box-shadow: var(--paper-shadow);
+  box-shadow: 0 2px 22px rgba(0,0,0,.20);
 }
 .turn-leaf .leaf-front { background: var(--surface); }
 .turn-leaf .leaf-back {
@@ -261,26 +274,38 @@ body.focus-mode .page-content { padding-top: 30px; }
   color: var(--muted); display: flex; align-items: center; justify-content: center; font-size: 14px;
 }
 .turn-leaf .leaf-shade {
-  position: absolute; inset: 0; border-radius: 16px; pointer-events: none;
-  background: linear-gradient(to right, rgba(0,0,0,.22), rgba(0,0,0,0) 40%);
+  position: absolute; inset: 0; border-radius: 0; pointer-events: none;
+  background: linear-gradient(to right, rgba(0,0,0,.28), rgba(0,0,0,0) 45%);
 }
 .turn-leaf .leaf-shade.back {
-  background: linear-gradient(to left, rgba(0,0,0,.18), rgba(0,0,0,0) 40%);
+  background: linear-gradient(to left, rgba(0,0,0,.22), rgba(0,0,0,0) 45%);
 }
-.turn-leaf.fwd { animation: leafFwd .62s cubic-bezier(.32,.72,.35,1) forwards; }
-.turn-leaf.back { animation: leafBack .62s cubic-bezier(.32,.72,.35,1) forwards; }
+.turn-leaf.fwd { animation: leafFwd .7s cubic-bezier(.32,.72,.35,1) forwards; }
+.turn-leaf.back { animation: leafBack .7s cubic-bezier(.32,.72,.35,1) forwards; }
 @keyframes leafFwd {
-  0% { transform: rotateY(0deg); }
-  100% { transform: rotateY(-180deg); }
+  0% { transform: rotateY(0deg) scaleX(1); }
+  45% { transform: rotateY(-82deg) scaleX(.94); }
+  100% { transform: rotateY(-180deg) scaleX(1); }
 }
 @keyframes leafBack {
-  0% { transform: rotateY(-180deg); }
-  100% { transform: rotateY(0deg); }
+  0% { transform: rotateY(-180deg) scaleX(1); }
+  55% { transform: rotateY(-82deg) scaleX(.94); }
+  100% { transform: rotateY(0deg) scaleX(1); }
 }
 @media (prefers-reduced-motion: reduce) {
   .turn-leaf.fwd, .turn-leaf.back { animation-duration: .15s; }
   .sentence .w.on { animation: none; }
 }
+/* v3.1: page-turn edge buttons (‹ ›) — a reliable, discoverable way to turn
+   pages besides swipe. Subtle, only in horizontal-flip mode. */
+.page-turn-btn {
+  position: absolute; top: 50%; transform: translateY(-50%); z-index: 15;
+  width: 44px; height: 72px; display: flex; align-items: center; justify-content: center;
+  font-size: 26px; color: var(--muted); background: transparent; border-radius: 12px;
+}
+.page-turn-btn:active { background: rgba(0,0,0,.06); color: var(--text); }
+.page-turn-btn.prev { left: 2px; }
+.page-turn-btn.next { right: 2px; }
 
 /* ---------- v3: Languages download rows ---------- */
 .lang-list { display: flex; flex-direction: column; gap: 10px; }
@@ -293,3 +318,68 @@ body.focus-mode .page-content { padding-top: 30px; }
 .lang-status { font-size: 13px; color: var(--muted); margin-top: 2px; }
 .lang-prog { height: 5px; background: var(--surface2); border-radius: 3px; overflow: hidden; margin-top: 6px; }
 .lang-prog i { display: block; height: 100%; background: var(--accent); width: 0%; }
+
+/* ---------- v3.1 (Play Books reference) ---------- */
+/* Footer: page slider on top, info row below (pages left | Page X of Y | %). */
+.page-footer { display: flex; flex-direction: column; gap: 2px; padding: 6px 18px 7px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); background: var(--surface); letter-spacing: .02em; }
+.page-slider-row { display: flex; align-items: center; gap: 8px; }
+.page-slider { flex: 1; -webkit-appearance: none; appearance: none; height: 5px; border-radius: 3px; background: var(--surface2); outline: none; }
+.page-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: 2px solid var(--surface); box-shadow: 0 1px 4px var(--shadow); cursor: pointer; }
+.page-slider::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: var(--accent); border: 2px solid var(--surface); cursor: pointer; }
+.page-slider-num { font-variant-numeric: tabular-nums; min-width: 52px; text-align: right; }
+.page-footer-row { display: flex; justify-content: space-between; }
+.page-footer-row span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Drawer tabs: Chapters / Bookmarks / Notes (bottom-sheet style tabs). */
+.drawer-tabs { display: flex; gap: 4px; margin: 10px 0 4px; border-bottom: 1px solid var(--border); }
+.drawer-tab { flex: 1; padding: 9px 4px; font-size: 13px; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; text-align: center; }
+.drawer-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.chapter-list li .ch-page { color: var(--muted); font-size: 12px; flex-shrink: 0; }
+.chapter-list li .ch-current { color: var(--accent); font-size: 12px; flex-shrink: 0; font-weight: 600; }
+.note-list { list-style: none; }
+.note-list li { padding: 10px 8px; border-bottom: 1px solid var(--border); font-size: 13px; cursor: pointer; }
+.note-list li .note-snip { color: var(--muted); margin-top: 3px; display: block; }
+.notes-empty { color: var(--muted); font-size: 13px; line-height: 1.6; padding: 18px 6px; text-align: center; }
+.notes-empty b { color: var(--text); display: block; margin-bottom: 6px; font-size: 14px; }
+
+/* Settings sheet tabs: Text / Lighting. */
+.sheet-tabs { display: flex; gap: 4px; margin: 4px 0 14px; border-bottom: 1px solid var(--border); }
+.sheet-tab { flex: 1; padding: 10px 4px; font-size: 14px; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; text-align: center; }
+.sheet-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.font-pick { display: flex; gap: 12px; flex-wrap: wrap; padding: 6px 0; }
+.font-opt { display: flex; flex-direction: column; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); min-width: 52px; }
+.font-opt .font-circle { width: 46px; height: 46px; border-radius: 50%; border: 2px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 22px; background: var(--bg); color: var(--text); }
+.font-opt.active .font-circle { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+.font-opt.active { color: var(--accent); font-weight: 700; }
+.font-opt .font-circle.f-serif { font-family: Georgia, "Times New Roman", serif; }
+.font-opt .font-circle.f-sans { font-family: system-ui, sans-serif; }
+.font-opt .font-circle.f-telugu { font-family: "Noto Sans Telugu", sans-serif; }
+.stepper { display: flex; align-items: center; gap: 10px; }
+.stepper button { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--border); background: var(--bg); font-size: 18px; line-height: 1; }
+.stepper .step-val { min-width: 52px; text-align: center; font-variant-numeric: tabular-nums; font-weight: 600; }
+.theme-swatches { display: flex; gap: 12px; }
+.swatch { width: 44px; height: 44px; border-radius: 50%; border: 2px solid var(--border); position: relative; }
+.swatch.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+.swatch.sw-white { background: #ffffff; }
+.swatch.sw-cream { background: #fdf1d7; }
+.swatch.sw-black { background: #221d18; }
+.set-toggle { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 11px 0; border-bottom: 1px solid var(--border); }
+.set-toggle .t-label { font-weight: 600; }
+.set-toggle .t-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.switch { position: relative; width: 48px; height: 28px; flex-shrink: 0; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch .knob { position: absolute; inset: 0; background: var(--surface2); border-radius: 999px; transition: background .2s; cursor: pointer; }
+.switch .knob:before { content: ""; position: absolute; width: 22px; height: 22px; left: 3px; top: 3px; background: var(--surface); border-radius: 50%; transition: transform .2s; box-shadow: 0 1px 3px var(--shadow); }
+.switch input:checked + .knob { background: var(--accent); }
+.switch input:checked + .knob:before { transform: translateX(20px); }
+
+/* Reader 3-dot menu (Play Books: Remove bookmark, Read aloud, Settings, Help, Feedback). */
+.reader-menu { position: fixed; right: 12px; top: 64px; z-index: 80; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 4px 16px var(--shadow); display: flex; flex-direction: column; min-width: 200px; }
+.reader-menu button { padding: 13px 16px; text-align: left; border-bottom: 1px solid var(--border); font-size: 14px; }
+.reader-menu button:last-child { border-bottom: none; }
+.reader-menu button:active { background: var(--surface2); }
+
+/* v3.1: reading brightness + night light (Lighting tab). A fixed overlay that
+   dims/warms the page without touching the text layout. */
+.bright-overlay { position: fixed; inset: 0; pointer-events: none; z-index: 45; background: #000; opacity: 0; }
+.night-overlay { position: fixed; inset: 0; pointer-events: none; z-index: 46; background: rgba(255, 140, 40, .14); opacity: 0; }

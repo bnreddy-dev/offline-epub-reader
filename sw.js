@@ -7,7 +7,9 @@
    Everything else passes through to the network untouched. If the worker is
    not active, the app plays the audio directly — the worker is a bonus, not
    a dependency. Any failure here falls through to the network. */
-const CACHE = 'gtts-v1';
+/* v3.1: cache name bumped so the new worker activates cleanly and the old
+   build's cached audio does not linger. */
+const CACHE = 'gtts-v2';
 const MAX_ENTRIES = 120; // Chrome counts ~7MB quota per opaque response; stay small
 const TTS_HOSTS = ['translate.google.com', 'translate.googleapis.com'];
 

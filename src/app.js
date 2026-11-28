@@ -28,6 +28,12 @@
    ===================================================================== */
 'use strict';
 
+/* v3.1 — the running build's version. version.json in the repo root carries
+   the same number; on load the app fetches it (no-store) and, if it differs,
+   shows a "New version available — Reload" banner. That is the stale-cache
+   fix: a hard reload can never silently keep serving an old build. */
+const APP_VERSION = '3.1.0';
+
 /* ---------------- utilities ---------------- */
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
@@ -62,7 +68,12 @@ function applyI18n() {
 
 /* ---------------- settings (localStorage) ---------------- */
 const SETTINGS_KEY = 'epubreader.settings.v1';
-const defaults = { theme: 'book', direction: 'horizontal', font: 'serif', fontSize: 3, lineSpacing: 2, uiLang: 'en', genre: 'thriller', moodFollow: true, sleepDefault: 0, largeText: false, highContrast: false };
+/* v3.1 additions: align (default/left/justify), page3d (3D curl on/off),
+   volumeKeys (volume keys turn pages), autoReadAloud (start narration on
+   chapter open), defPreview (auto-show definition on selection),
+   offlineDict (offline dictionary on/off), brightness (30–100),
+   brightnessOn, nightLight. */
+const defaults = { theme: 'book', direction: 'horizontal', font: 'serif', fontSize: 3, lineSpacing: 2, uiLang: 'en', genre: 'thriller', moodFollow: true, sleepDefault: 0, largeText: false, highContrast: false, align: 'default', page3d: true, volumeKeys: false, autoReadAloud: false, defPreview: true, offlineDict: true, brightness: 100, brightnessOn: false, nightLight: false };
 let settings = Object.assign({}, defaults);
 try { const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); settings = Object.assign({}, defaults, s); } catch (e) {}
 function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {} }
@@ -214,7 +225,7 @@ const KOKORO_SAMPLE_RATE = 24000;
    115 MB model that never finishes. */
 const GT_CHUNK_CHARS = 150;
 const GT_MIN_GAP_MS = 300;        // throttle between Google requests (no 403)
-const GT_FETCH_TIMEOUT_MS = 60000; // a slow connection gets a full minute
+const GT_FETCH_TIMEOUT_MS = 20000; // v3.1: fail a hung sentence in 20s (was 60s). On a slow-but-working link canplaythrough fires well before this; only a dead/hung link waits it out, and the bar must not sit at 0% for minutes.
 const GT_CHARS_PER_SEC = 10.5;    // measured: ~130 chars -> ~11.4s of audio
 let gtLastFetchAt = 0;
 
@@ -446,6 +457,16 @@ function gtPoolEl() {
     const a = document.createElement('audio');
     a.preload = 'auto';
     a.setAttribute('playsinline', '');
+    /* v3.1 ROOT CAUSE FIX: Google Translate TTS returns HTTP 404 when the
+       request carries a non-Google Referer (verified: no Referer -> 200,
+       Referer: <our github.io origin> -> 404). A plain <audio> element
+       sends the page origin as Referer, so EVERY Google voice load failed
+       and the download sat at 0% forever. Sending no Referer fixes it.
+       (The Service Worker also strips Referer, but it only controls the
+       page after install — the first load goes direct, so this is the fix
+       that actually matters.) */
+    a.referrerPolicy = 'no-referrer';
+    a.setAttribute('referrerpolicy', 'no-referrer');
     document.body.appendChild(a);
     slot = { el: a, key: '', busy: false };
     GT_POOL.push(slot);
@@ -475,6 +496,12 @@ function gtSentenceKey(chapter, idx) { return (state.meta ? state.meta.id : 'x')
 /* Prepare (buffer) one Google sentence in the background. Resolves true
    when the audio is buffered enough to play, false on failure. Never throws
    for a single sentence — the caller decides what a failure means. */
+/* v3.1: resolves true (buffered), false (fast error — worth one retry), or
+   'timeout' (the load HUNG — no data at all; retrying a hung link just burns
+   time, so the caller does NOT retry a timeout). GT_FETCH_TIMEOUT_MS is
+   12s: on a slow-but-working link canplaythrough fires well before that
+   (the browser only needs a few KB buffered); only a dead/hung link waits
+   the whole timeout. */
 function gtPrepare(key, text, lang) {
   const url = googleTtsUrl(text, lang);
   const slot = gtAudioFor(key, url);
@@ -487,7 +514,11 @@ function gtPrepare(key, text, lang) {
     const onErr = () => finish(false);
     a.addEventListener('canplaythrough', onOk);
     a.addEventListener('error', onErr);
-    setTimeout(() => finish(a.readyState >= 2), GT_FETCH_TIMEOUT_MS);
+    // v3.1: on timeout, only count the sentence as buffered if the audio
+    // REALLY has data (readyState >= 3, HAVE_FUTURE_DATA). readyState 2
+    // (HAVE_CURRENT_DATA) can be reached by a hung/partial load and is NOT
+    // playable audio — counting it made the bar creep up on a dead link.
+    setTimeout(() => finish(a.readyState >= 3 ? true : 'timeout'), GT_FETCH_TIMEOUT_MS);
   });
 }
 /* Play one prepared Google sentence through its pooled audio element.
@@ -993,6 +1024,12 @@ async function loadChapter(chIdx, opts) {
   updateCacheInfo();
   updateAudioBar();
   savePosition();
+  // v3.1: "Automatically read aloud" — start narration when a chapter opens.
+  // Guarded by !state.playing so the narration engine's own chapter advance
+  // (which keeps playing=true) never restarts it.
+  if (settings.autoReadAloud && !state.playing) {
+    setTimeout(() => { if (settings.autoReadAloud && !state.playing && state.meta) playNarration(); }, 1200);
+  }
   return true;
 }
 
@@ -1043,6 +1080,7 @@ async function registerBook() {
   saveLibrary();
   state.bookmarks = JSON.parse(localStorage.getItem('epubreader.bm.' + m.id) || '[]');
   state.highlights = JSON.parse(localStorage.getItem('epubreader.hl.' + m.id) || '[]');
+  loadNotes(); // v3.1: per-book notes (Contents > Notes tab)
   state.completedChapters = JSON.parse(localStorage.getItem('epubreader.done.' + m.id) || '{}');
   state.perBook = JSON.parse(localStorage.getItem('epubreader.pb.' + m.id) || '{}');
   applyPerBookSettings();
@@ -1073,11 +1111,12 @@ function applyPerBookSettings() {
   if (pb.font) settings.font = pb.font;
   if (pb.direction) settings.direction = pb.direction;
   if (pb.speed) state.speed = pb.speed;
+  if (pb.align) settings.align = pb.align;
   applyTheme(); applyFont();
 }
 function savePerBookSettings() {
   if (!state.meta) return;
-  state.perBook = { theme: settings.theme, font: settings.font, direction: settings.direction, speed: state.speed };
+  state.perBook = { theme: settings.theme, font: settings.font, direction: settings.direction, speed: state.speed, align: settings.align };
   try { localStorage.setItem('epubreader.pb.' + state.meta.id, JSON.stringify(state.perBook)); } catch (e) {}
 }
 
@@ -1103,9 +1142,11 @@ async function prepareVoiceForBook() {
     if (lang === 'te') {
       await warmChapterAudio(state.currentChapter, myToken, true);
       if (myToken !== VOICE_PREP.token) return;
-      // keep warming the next chapters quietly (no top bar — the current
-      // chapter is what matters for immediate Play)
-      for (let c = state.currentChapter + 1; c < state.chapters.length; c++) {
+      // v3.1: warm only the NEXT 2 chapters quietly (no top bar). Warming the
+      // whole book in the background would saturate a slow connection (~0.3
+      // KB/s) and starve the chapter the user is actually reading. Later
+      // chapters warm on demand when the reader reaches them.
+      for (let c = state.currentChapter + 1; c < Math.min(state.chapters.length, state.currentChapter + 3); c++) {
         if (myToken !== VOICE_PREP.token || !state.meta) return;
         await warmChapterAudio(c, myToken, false).catch(() => {});
         await sleep(50);
@@ -1145,11 +1186,17 @@ async function warmChapterAudio(chIdx, token, showBar) {
   if (!total) return;
   const label = 'Downloading Telugu voice — Chapter ' + (chIdx + 1);
   let ready = 0; // sentences ACTUALLY buffered — a failed fetch never counts
-  // one pass over a list of sentence indices; returns the indices that failed
+  // one pass over a list of sentence indices; returns the indices that failed.
+  // v3.1 CIRCUIT BREAKER: if 3 sentences fail in a row the link is down
+  // (offline), not slow — stop the pass at once and say so honestly instead
+  // of grinding through every sentence at 0% for minutes. The rest will
+  // download on demand when the user listens.
   const runPass = async (list) => {
     const stillFailed = [];
+    let consecFail = 0;
     for (const i of list) {
       if (token !== VOICE_PREP.token || !state.meta) return null;
+      if (consecFail >= 3) { stillFailed.push(i); continue; }
       const s = sentences[i];
       const clean = sanitizeForSpeech(s.text, 'te');
       if (!hasSpeakable(clean)) { ready++; if (showBar) setDlProgress(label, ready, total); continue; }
@@ -1160,7 +1207,10 @@ async function warmChapterAudio(chIdx, token, showBar) {
         const key = state.meta.id + '::' + chIdx + '::' + i + '::c' + ci;
         const got = await gtPrepare(key, chunks[ci], 'te');
         if (!got) {
-          // retry once after a backoff (slow/flaky link), then move on
+          // v3.1: retry once after a backoff — but ONLY for a fast error.
+          // A 'timeout' means the link is hung/dead; retrying it just burns
+          // ~12s more per sentence and keeps the bar at 0% for minutes.
+          if (got === 'timeout') { ok = false; break; }
           await sleep(2000);
           if (token !== VOICE_PREP.token) return null;
           const got2 = await gtPrepare(key, chunks[ci], 'te');
@@ -1169,8 +1219,8 @@ async function warmChapterAudio(chIdx, token, showBar) {
         // throttle so Google never 403s us
         await sleep(GT_MIN_GAP_MS);
       }
-      if (ok) { ready++; if (showBar) setDlProgress(label, ready, total); }
-      else stillFailed.push(i);
+      if (ok) { ready++; consecFail = 0; if (showBar) setDlProgress(label, ready, total); }
+      else { stillFailed.push(i); consecFail++; }
       // yield to the UI thread every sentence — the page must stay responsive
       await sleep(0);
     }
@@ -1179,7 +1229,10 @@ async function warmChapterAudio(chIdx, token, showBar) {
   if (showBar) setDlProgress(label, 0, total);
   let failed = await runPass(sentences.map((_, i) => i));
   if (failed == null) return;
-  if (failed.length && token === VOICE_PREP.token) {
+  // v3.1: retry the failed sentences ONCE — but only if some sentences DID
+  // buffer (a slow/flaky link). If NOTHING buffered (ready === 0) the link
+  // is down, not slow; retrying would just sit at 0% longer. Say so at once.
+  if (failed.length && ready > 0 && token === VOICE_PREP.token) {
     // one quiet background retry for the sentences that failed (slow link);
     // the bar says so honestly while it retries.
     if (showBar) setDlMessage(label + ' — ' + ready + ' of ' + total + ' ready, retrying the rest…', (ready / total) * 100);
@@ -1376,15 +1429,27 @@ function showPage(idx, instant) {
   };
   if (instant || idx === state.currentPage) { doShow(); return; }
   const dir = idx > state.currentPage ? 1 : -1;
+  // v3.1: the 3D curl can be switched off in Settings ("Use 3D effect for
+  // page turning") — off means a plain slide (no leaf).
+  if (settings.page3d === false) { doShow(); return; }
   const wrap = $('#flipWrap');
-  // the turning leaf: a clone of the page as it looks right now
-  const leaf = el('div', 'turn-leaf' + (dir > 0 ? ' fwd' : ' back'));
+  // the turning leaf: a clone of the page as it looks right now.
+  // v3.1 FIX (v3 curl was invisible): the leaf is created WITHOUT the
+  // animation class, appended, then the class is added in a rAF AFTER a
+  // forced reflow. v3 created it with the class already on, so the browser
+  // batched the append + the content swap into one paint and the animation
+  // never visibly ran (measured rotation 0.05°).
+  const leaf = el('div', 'turn-leaf');
   const front = el('div', 'leaf-face leaf-front');
   const clone = content.cloneNode(true);
   clone.removeAttribute('id');
   front.appendChild(clone);
   front.appendChild(el('div', 'leaf-shade'));
+  // v3.1: the back of the turning page shows the chapter title, so the leaf
+  // reads as a real page (not a blank panel) while it curls over.
   const back = el('div', 'leaf-face leaf-back');
+  const ch = state.chapters[state.currentChapter];
+  back.appendChild(el('div', null, ch ? ch.title : ''));
   leaf.appendChild(front);
   leaf.appendChild(back);
   wrap.appendChild(leaf);
@@ -1392,10 +1457,11 @@ function showPage(idx, instant) {
   try { clone.scrollTop = content.scrollTop; } catch (e) {}
   // swap the real content underneath (hidden by the leaf until it turns)
   doShow();
+  void leaf.offsetWidth; // force a reflow so the leaf paints at rotateY(0) first
   requestAnimationFrame(() => {
-    leaf.classList.add('turning');
+    leaf.classList.add(dir > 0 ? 'fwd' : 'back');
     leaf.addEventListener('animationend', () => leaf.remove(), { once: true });
-    setTimeout(() => leaf.remove(), 750);
+    setTimeout(() => leaf.remove(), 800);
   });
 }
 function pageForSentence(si) {
@@ -1407,12 +1473,39 @@ function pageForSentence(si) {
   }
   return 0;
 }
+/* v3.1: the page number of the first page of chapter i (1-based), from the
+   cached per-chapter page totals. Used by the Contents drawer so each chapter
+   shows its start page like Play Books ("Chapter One … page 9"). */
+function chapterStartPage(i) {
+  let p = 1;
+  for (let c = 0; c < i && c < state.chapters.length; c++) {
+    p += (state.pageTotals && state.pageTotals[c]) || 1;
+  }
+  return p;
+}
 function updatePageFooter() {
   const total = cachedPageTotal();
   const cur = settings.direction === 'horizontal' ? (state.currentPage + 1) : currentScrollPage();
   $('#pageNum').textContent = 'Page ' + cur + ' of ' + total;
   const ch = state.chapters[state.currentChapter];
   $('#chapterPos').textContent = ch ? ('Chapter ' + (state.currentChapter + 1) + ' of ' + state.chapters.length) : '';
+  // v3.1 (Play Books footer): pages left in this chapter, % through the book,
+  // and the bottom page slider.
+  const chPages = (state.pages && state.pages.length) || 1;
+  const left = settings.direction === 'horizontal' ? Math.max(0, chPages - state.currentPage - 1) : 0;
+  const pl = $('#pagesLeft'); if (pl) pl.textContent = settings.direction === 'horizontal' ? (left + (left === 1 ? ' page left in chapter' : ' pages left in chapter')) : '';
+  const pct = total > 0 ? Math.round((cur / total) * 100) : 0;
+  const pp = $('#pagePct'); if (pp) pp.textContent = pct + '%';
+  const sl = $('#pageSlider');
+  if (sl) {
+    sl.max = Math.max(1, total);
+    if (document.activeElement !== sl) sl.value = cur;
+  }
+  const sn = $('#pageSliderNum'); if (sn) sn.textContent = cur + ' / ' + total;
+  // the on-page ‹ › buttons only make sense in horizontal-flip mode
+  const pv = $('#btnPagePrev'), nx = $('#btnPageNext');
+  if (pv) pv.classList.toggle('hidden', settings.direction !== 'horizontal');
+  if (nx) nx.classList.toggle('hidden', settings.direction !== 'horizontal');
 }
 function pageTotalKey() {
   return [state.currentChapter, settings.direction, window.innerWidth, window.innerHeight, settings.fontSize, settings.lineSpacing, settings.font].join('|');
@@ -1462,11 +1555,69 @@ function updateChapterList() {
     if (state.completedChapters[i]) li.appendChild(el('span', 'done', '✓ '));
     const nm = el('span', 'ch-name', ch.title);
     li.appendChild(nm);
-    if (i === state.currentChapter) li.classList.add('active');
+    // v3.1 (Play Books): each chapter shows its START PAGE number, and the
+    // current chapter is marked "currently on page X".
+    const start = chapterStartPage(i);
+    li.appendChild(el('span', 'ch-page', 'page ' + start));
+    if (i === state.currentChapter) {
+      li.classList.add('active');
+      const cur = settings.direction === 'horizontal' ? (state.currentPage + 1) : currentScrollPage();
+      li.appendChild(el('span', 'ch-current', 'currently on page ' + cur));
+    }
     li.onclick = () => { stopNarration(false); loadChapter(i); closeDrawer(); };
     ul.appendChild(li);
   });
-  renderBookmarks(); renderHighlights();
+  renderBookmarks(); renderHighlights(); renderNotes();
+}
+/* v3.1 — Notes (Play Books Contents tab). A note is attached to the current
+   sentence; added by touch-and-hold on the text (long-press) or from the
+   selection menu. Stored per book in localStorage. */
+function loadNotes() {
+  if (!state.meta) { state.notes = []; return; }
+  try { state.notes = JSON.parse(localStorage.getItem('epubreader.notes.' + state.meta.id) || '[]'); } catch (e) { state.notes = []; }
+}
+function saveNotes() {
+  if (!state.meta) return;
+  try { localStorage.setItem('epubreader.notes.' + state.meta.id, JSON.stringify(state.notes || [])); } catch (e) {}
+}
+function addNote(text) {
+  if (!state.meta) return;
+  const s = state.sentences[state.sentenceIndex];
+  const note = (text || '').trim();
+  if (!note) return;
+  state.notes = state.notes || [];
+  state.notes.unshift({ chapter: state.currentChapter, sentence: state.sentenceIndex, text: s ? s.text.slice(0, 120) : '', note: note.slice(0, 500), at: Date.now() });
+  state.notes = state.notes.slice(0, 200);
+  saveNotes(); renderNotes();
+  toast('Note saved');
+}
+function renderNotes() {
+  const ul = $('#noteList');
+  const empty = $('#notesEmpty');
+  if (!ul) return;
+  ul.innerHTML = '';
+  const notes = state.notes || [];
+  if (empty) empty.classList.toggle('hidden', notes.length > 0);
+  notes.forEach((n, i) => {
+    const li = el('li');
+    li.appendChild(el('div', null, '✎ ' + n.note));
+    if (n.text) li.appendChild(el('span', 'note-snip', '“' + n.text + '”'));
+    li.onclick = () => { loadChapter(n.chapter).then(() => { state.pendingSentence = n.sentence; state.sentenceIndex = n.sentence; buildSentenceSpans(); scrollToSentence(); }); closeDrawer(); };
+    const del = el('button', 'mini-btn', '✕');
+    del.onclick = ev => { ev.stopPropagation(); state.notes.splice(i, 1); saveNotes(); renderNotes(); };
+    li.appendChild(del);
+    ul.appendChild(li);
+  });
+}
+/* v3.1 — remove the current (manual) bookmark, for the 3-dot menu. */
+function removeCurrentBookmark() {
+  if (!state.meta) return;
+  const i = state.bookmarks.findIndex(b => !b.auto && b.chapter === state.currentChapter && b.sentence === state.sentenceIndex);
+  if (i >= 0) {
+    state.bookmarks.splice(i, 1);
+    try { localStorage.setItem('epubreader.bm.' + state.meta.id, JSON.stringify(state.bookmarks)); } catch (e) {}
+    renderBookmarks(); toast('Bookmark removed');
+  } else toast('No bookmark here');
 }
 function updateCacheInfo() {
   const n = $('#cacheInfo');
@@ -1870,7 +2021,8 @@ function defineWord(word) {
 function applyTheme() {
   document.body.dataset.theme = settings.theme;
   document.querySelector('meta[name="theme-color"]').setAttribute('content', settings.theme === 'dark' ? '#141414' : settings.theme === 'white' ? '#ffffff' : '#f6efdd');
-  const sel = $('#setTheme'); if (sel) sel.value = settings.theme;
+  // v3.1: sync the Lighting-tab theme swatches (white / cream / black)
+  $$('#themeSwatches .swatch').forEach(b => b.classList.toggle('active', b.dataset.theme === settings.theme));
 }
 function applyFont() {
   document.body.classList.remove('font-serif', 'font-sans', 'font-telugu');
@@ -1881,9 +2033,22 @@ function applyFont() {
   document.documentElement.style.setProperty('--lh', lh);
   document.body.classList.toggle('large-text', !!settings.largeText);
   document.body.classList.toggle('high-contrast', !!settings.highContrast);
-  const fsz = $('#setFontSize'); if (fsz) fsz.value = settings.fontSize;
-  const ls = $('#setLineSpacing'); if (ls) ls.value = settings.lineSpacing;
-  const f = $('#setFont'); if (f) f.value = settings.font;
+  // v3.1: sync the Text-tab controls — font circles, size/spacing % steppers, alignment
+  $$('#fontPick .font-opt').forEach(b => b.classList.toggle('active', b.dataset.font === settings.font));
+  const fsp = $('#fontSizePct'); if (fsp) fsp.textContent = [80, 90, 100, 115, 130][clamp(settings.fontSize - 1, 0, 4)] + '%';
+  const lsp = $('#lineSpacingPct'); if (lsp) lsp.textContent = [100, 120, 140][clamp(settings.lineSpacing - 1, 0, 2)] + '%';
+  const al = $('#setAlign'); if (al) al.value = settings.align || 'default';
+  // text alignment: default (inherit) / left / justify
+  const pc = $('#pageContent');
+  if (pc) pc.style.textAlign = settings.align === 'justify' ? 'justify' : settings.align === 'left' ? 'left' : '';
+}
+/* v3.1: reading brightness + night light (Lighting tab). The brightness
+   overlay dims the page; the night-light overlay warms it. Both are cheap
+   fixed overlays that never touch the text layout. */
+function applyLighting() {
+  const b = $('#brightOverlay'), n = $('#nightOverlay');
+  if (b) b.style.opacity = (settings.brightnessOn && settings.brightness < 100) ? String(((100 - settings.brightness) / 100) * 0.6) : '0';
+  if (n) n.style.opacity = settings.nightLight ? '1' : '0';
 }
 function cycleTheme() {
   const order = ['book', 'white', 'dark'];
@@ -2027,7 +2192,19 @@ async function handleFile(file) {
     else meta = await openEpub(buf, name);
     if (token !== loadToken) { clearTimeout(loadTimer); return; }
     setLoadProgress(70, 'Building chapters…');
-    idbPut('books', { id: meta.id, type: isPdf ? 'pdf' : 'epub', data: buf, title: meta.title }).catch(() => {});
+    // v3.1 (Continue fix): the EPUB file itself MUST be persisted before the
+    // reader opens. The v3 fire-and-forget put silently swallowed failures,
+    // so "Continue" later found no file. Now we AWAIT it and READ IT BACK;
+    // if it fails we tell the user plainly instead of pretending it saved.
+    setLoadProgress(80, 'Saving the book for later…');
+    try {
+      await idbPut('books', { id: meta.id, type: isPdf ? 'pdf' : 'epub', data: buf, title: meta.title });
+      const check = await idbGet('books', meta.id);
+      if (!check || !check.data) throw new Error('save did not stick');
+    } catch (e) {
+      console.error('book persist failed', e);
+      toast('Book opened, but it could not be saved — Continue may not work. Check storage permission.');
+    }
     try { localStorage.removeItem('epubreader.pos.' + meta.id); } catch (e) {}
     try { localStorage.removeItem('epubreader.auto.' + meta.id); } catch (e) {}
     await loadChapter(nextNarratableChapter(0) || 0);
@@ -2300,11 +2477,26 @@ function wire() {
   document.addEventListener('contextmenu', ev => {
     if (ev.target && ev.target.closest && ev.target.closest('#pageContent')) ev.preventDefault();
   });
-  $('#setTheme').addEventListener('change', ev => { settings.theme = ev.target.value; saveSettings(); savePerBookSettings(); applyTheme(); });
+  // v3.1: Text/Lighting tab controls (replaces the old setTheme/setFont/
+  // setFontSize/setLineSpacing selects, which no longer exist).
   $('#setDirection').addEventListener('change', ev => setDirection(ev.target.value));
-  $('#setFont').addEventListener('change', ev => { settings.font = ev.target.value; saveSettings(); savePerBookSettings(); applyFont(); });
-  $('#setFontSize').addEventListener('input', ev => { settings.fontSize = parseInt(ev.target.value, 10); saveSettings(); applyFont(); paginate(); });
-  $('#setLineSpacing').addEventListener('input', ev => { settings.lineSpacing = parseInt(ev.target.value, 10); saveSettings(); applyFont(); paginate(); });
+  $$('#themeSwatches .swatch').forEach(b => b.addEventListener('click', () => { settings.theme = b.dataset.theme; saveSettings(); savePerBookSettings(); applyTheme(); }));
+  $$('#fontPick .font-opt').forEach(b => b.addEventListener('click', () => { settings.font = b.dataset.font; saveSettings(); savePerBookSettings(); applyFont(); if (state.meta) paginate(); }));
+  $('#btnFontMinus').onclick = () => { settings.fontSize = clamp(settings.fontSize - 1, 1, 5); saveSettings(); applyFont(); if (state.meta) paginate(); };
+  $('#btnFontPlus').onclick = () => { settings.fontSize = clamp(settings.fontSize + 1, 1, 5); saveSettings(); applyFont(); if (state.meta) paginate(); };
+  $('#btnLineMinus').onclick = () => { settings.lineSpacing = clamp(settings.lineSpacing - 1, 1, 3); saveSettings(); applyFont(); if (state.meta) paginate(); };
+  $('#btnLinePlus').onclick = () => { settings.lineSpacing = clamp(settings.lineSpacing + 1, 1, 3); saveSettings(); applyFont(); if (state.meta) paginate(); };
+  $('#setAlign').addEventListener('change', ev => { settings.align = ev.target.value; saveSettings(); savePerBookSettings(); applyFont(); });
+  // v3.1: Lighting tab — brightness + night light.
+  $('#setBrightnessOn').addEventListener('change', ev => { settings.brightnessOn = ev.target.checked; saveSettings(); applyLighting(); });
+  $('#setBrightness').addEventListener('input', ev => { settings.brightness = parseInt(ev.target.value, 10) || 100; saveSettings(); applyLighting(); });
+  $('#setNightLight').addEventListener('change', ev => { settings.nightLight = ev.target.checked; saveSettings(); applyLighting(); });
+  // v3.1: reading toggles (Lighting tab).
+  $('#setPage3d').addEventListener('change', ev => { settings.page3d = ev.target.checked; saveSettings(); });
+  $('#setVolumeKeys').addEventListener('change', ev => { settings.volumeKeys = ev.target.checked; saveSettings(); });
+  $('#setAutoReadAloud').addEventListener('change', ev => { settings.autoReadAloud = ev.target.checked; saveSettings(); });
+  $('#setDefPreview').addEventListener('change', ev => { settings.defPreview = ev.target.checked; saveSettings(); });
+  $('#setOfflineDict').addEventListener('change', ev => { settings.offlineDict = ev.target.checked; saveSettings(); });
   $('#setGenre').addEventListener('change', ev => { settings.genre = ev.target.value; saveSettings(); if (state.meta) { const m = moodOfChapter(state.chapters[state.currentChapter]); setMood(m); } });
   $('#setMoodFollow').addEventListener('change', ev => { settings.moodFollow = ev.target.checked; saveSettings(); setMood(state.mood); });
   $('#setSleepDefault').addEventListener('change', ev => { settings.sleepDefault = parseInt(ev.target.value, 10) || 0; saveSettings(); });
@@ -2314,57 +2506,190 @@ function wire() {
     if ($('#reader').classList.contains('hidden')) return;
     if (ev.target.tagName === 'INPUT' || ev.target.tagName === 'SELECT' || ev.target.tagName === 'TEXTAREA') return;
     if (ev.code === 'Space') { ev.preventDefault(); playNarration(); }
-    else if (ev.key === 'ArrowRight') nextSentence();
-    else if (ev.key === 'ArrowLeft') prevSentence();
+    // v3.1: in horizontal-flip mode the arrow keys turn PAGES (the page is
+    // the unit); in vertical mode they move sentences. Volume keys turn
+    // pages too when the setting is on.
+    else if (ev.key === 'ArrowRight') { if (settings.direction === 'horizontal') showPage(state.currentPage + 1); else nextSentence(); }
+    else if (ev.key === 'ArrowLeft') { if (settings.direction === 'horizontal') showPage(state.currentPage - 1); else prevSentence(); }
+    else if ((ev.key === 'VolumeUp' || ev.key === 'VolumeDown') && settings.volumeKeys) { ev.preventDefault(); showPage(state.currentPage + (ev.key === 'VolumeUp' ? 1 : -1)); }
     else if (ev.key === 'b' || ev.key === 'B') addBookmark(false);
     else if (ev.key === 'm' || ev.key === 'M') openMoodMenu();
   });
-  let touchX = null;
-  $('#flipWrap').addEventListener('touchstart', ev => { touchX = ev.touches[0].clientX; }, { passive: true });
-  $('#flipWrap').addEventListener('touchend', ev => {
-    if (touchX == null || settings.direction !== 'horizontal') return;
-    const dx = ev.changedTouches[0].clientX - touchX;
-    if (dx < -50) showPage(state.currentPage + 1);
-    else if (dx > 50) showPage(state.currentPage - 1);
-    touchX = null;
-  }, { passive: true });
+  // v3.1 swipe: pointer events (touch + mouse drag) on the page. v3 used
+  // touchstart/touchend only and the swipe did nothing on the live test.
+  // touch-action: pan-y (CSS) lets horizontal drags reach us instead of the
+  // browser treating them as a scroll.
+  let swipeX = null, swipeY = null;
+  const fw = $('#flipWrap');
+  fw.addEventListener('pointerdown', ev => { swipeX = ev.clientX; swipeY = ev.clientY; });
+  fw.addEventListener('pointerup', ev => {
+    if (swipeX == null || settings.direction !== 'horizontal') { swipeX = null; return; }
+    const dx = ev.clientX - swipeX, dy = ev.clientY - swipeY;
+    swipeX = null; swipeY = null;
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.4) {
+      if (dx < 0) showPage(state.currentPage + 1);
+      else showPage(state.currentPage - 1);
+    }
+  });
+  fw.addEventListener('pointercancel', () => { swipeX = null; swipeY = null; });
   window.addEventListener('resize', () => { if (state.meta && settings.direction === 'horizontal') paginate(); if (state.meta) scheduleSettle(); });
+
+  /* ================= v3.1 wiring ================= */
+  // Contents drawer tabs: Chapters / Bookmarks / Notes.
+  $$('.drawer-tab').forEach(b => b.addEventListener('click', () => {
+    $$('.drawer-tab').forEach(x => x.classList.toggle('active', x === b));
+    $('#drawerTabChapters').classList.toggle('hidden', b.dataset.tab !== 'chapters');
+    $('#drawerTabBookmarks').classList.toggle('hidden', b.dataset.tab !== 'bookmarks');
+    $('#drawerTabNotes').classList.toggle('hidden', b.dataset.tab !== 'notes');
+    if (b.dataset.tab === 'notes') renderNotes();
+    if (b.dataset.tab === 'chapters') updateChapterList();
+  }));
+  // Settings sheet tabs: Text / Lighting.
+  $$('.sheet-tab').forEach(b => b.addEventListener('click', () => {
+    $$('.sheet-tab').forEach(x => x.classList.toggle('active', x === b));
+    $('#setTabText').classList.toggle('hidden', b.dataset.tab !== 'text');
+    $('#setTabLighting').classList.toggle('hidden', b.dataset.tab !== 'lighting');
+  }));
+  // Reader 3-dot menu (Play Books): Remove bookmark, Read aloud, Settings, Help, Feedback.
+  $('#btnMenu').onclick = ev => { ev.stopPropagation(); $('#readerMenu').classList.toggle('hidden'); };
+  document.addEventListener('click', ev => {
+    const m = $('#readerMenu');
+    if (m && !m.classList.contains('hidden') && !ev.target.closest('#readerMenu') && ev.target.id !== 'btnMenu') m.classList.add('hidden');
+  });
+  $('#menuRemoveBookmark').onclick = () => { $('#readerMenu').classList.add('hidden'); removeCurrentBookmark(); };
+  $('#menuReadAloud').onclick = () => { $('#readerMenu').classList.add('hidden'); playNarration(); };
+  $('#menuSettings').onclick = () => { $('#readerMenu').classList.add('hidden'); $('#settingsSheet').classList.remove('hidden'); };
+  $('#menuHelp').onclick = () => { $('#readerMenu').classList.add('hidden'); toast('Swipe or use ‹ › to turn pages. Tap a word to hear it. Touch & hold text to add a note.', 4000); };
+  $('#menuFeedback').onclick = () => { $('#readerMenu').classList.add('hidden'); toast('Thanks — tell Ira what to improve.'); };
+  // On-page ‹ › turn buttons.
+  $('#btnPagePrev').onclick = () => showPage(state.currentPage - 1);
+  $('#btnPageNext').onclick = () => showPage(state.currentPage + 1);
+  // Bottom page slider (Play Books footer): drag to jump to a page.
+  $('#pageSlider').addEventListener('input', ev => {
+    const total = cachedPageTotal();
+    const page = clamp(parseInt(ev.target.value, 10) || 1, 1, Math.max(1, total));
+    if (settings.direction === 'horizontal') showPage(page - 1, true);
+    else {
+      const c = $('#pageContent');
+      const maxTop = Math.max(0, c.scrollHeight - c.clientHeight);
+      c.scrollTo({ top: Math.min((page - 1) * c.clientHeight, maxTop), behavior: 'smooth' });
+      setTimeout(updatePageFooter, 350);
+    }
+  });
+  // New-version banner reload.
+  $('#btnUpdateReload').onclick = () => location.reload();
+  // Long-press (touch & hold) on reading text adds a NOTE (Play Books Notes
+  // empty state). A short tap still speaks the word (tap-to-hear).
+  let lpTimer = null, lpFired = false;
+  const pcEl = $('#pageContent');
+  pcEl.addEventListener('pointerdown', ev => {
+    lpFired = false;
+    lpTimer = setTimeout(() => {
+      lpFired = true;
+      const s = state.sentences[state.sentenceIndex];
+      const cur = s ? s.text : '';
+      const note = window.prompt('Add a note about this passage:\n\n“' + cur.slice(0, 120) + '”');
+      if (note) addNote(note);
+    }, 650);
+  });
+  ['pointerup', 'pointermove', 'pointercancel', 'pointerleave'].forEach(t =>
+    pcEl.addEventListener(t, () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } }));
+  // Definition preview (Lighting tab): when on, selecting text shows the
+  // definition automatically instead of waiting for the Define tap.
+  document.addEventListener('selectionchange', () => {
+    if (!settings.defPreview || !settings.offlineDict) return;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed) return;
+    const word = (sel.toString() || '').trim().split(/\s+/)[0];
+    if (!word || word.length < 2) return;
+    const def = MINI_DICT[word.toLowerCase()];
+    if (def) {
+      const pop = $('#definePopup');
+      if (pop && pop.classList.contains('hidden')) {
+        pop.innerHTML = '<h4>' + esc(word) + '</h4><p>' + esc(def) + '</p>';
+        pop.classList.remove('hidden');
+        setTimeout(() => pop.classList.add('hidden'), 5000);
+      }
+    }
+  });
 }
 
 /* ---------------- service worker (offline Google audio cache) ---------------- */
 function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
   try {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    // updateViaCache:'none' + an explicit update() so the SW itself is never
+    // the reason an old build keeps serving (v3 stale-cache defect).
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+      .then(reg => { try { reg.update(); } catch (e) {} })
+      .catch(() => {});
+    // If a newer SW takes over while the page is open, check whether a newer
+    // build is actually deployed before offering a reload. (controllerchange
+    // also fires on FIRST install, when there is no older version — showing
+    // the banner then is a false positive.)
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      checkForUpdate();
+    });
   } catch (e) {}
+}
+
+/* v3.1 — version check (stale-cache fix). Fetches version.json with no-store;
+   if the deployed version is newer than the running one, shows the banner. */
+async function checkForUpdate() {
+  try {
+    const res = await fetch('version.json', { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && data.version && data.version !== APP_VERSION) showUpdateBanner();
+  } catch (e) {}
+}
+function showUpdateBanner() {
+  const b = $('#updateBanner'); if (!b) return;
+  b.classList.remove('hidden');
 }
 
 /* ---------------- init ---------------- */
 function init() {
+  // v3.1 (defect 5): a loading state IS visible on app start — the v3 test
+  // saw "no loading progress indicator on any load". Show the overlay with
+  // progress while the library renders, then hide it.
+  showLoad('Loading…', 15);
   // v3: app UI language follows the BROWSER (no picker, no list)
   settings.uiLang = browserUiLang();
   applyI18n();
   applyTheme();
   applyFont();
-  const st = $('#setTheme'); if (st) st.value = settings.theme;
+  applyLighting(); // v3.1: brightness / night light overlays
   const sd = $('#setDirection'); if (sd) sd.value = settings.direction;
   const sg = $('#setGenre'); if (sg) sg.value = settings.genre;
   const ss = $('#setSleepDefault'); if (ss) ss.value = String(settings.sleepDefault || 0);
   const sm = $('#setMoodFollow'); if (sm) sm.checked = !!settings.moodFollow;
   const sl = $('#setLargeText'); if (sl) sl.checked = !!settings.largeText;
   const sh = $('#setHighContrast'); if (sh) sh.checked = !!settings.highContrast;
-  const ver = $('#appVersion'); if (ver) ver.textContent = 'Version 3.0.0';
+  // v3.1: sync the Lighting-tab toggles + brightness slider.
+  const sbo = $('#setBrightnessOn'); if (sbo) sbo.checked = !!settings.brightnessOn;
+  const sb = $('#setBrightness'); if (sb) sb.value = settings.brightness || 100;
+  const snl = $('#setNightLight'); if (snl) snl.checked = !!settings.nightLight;
+  const sp3 = $('#setPage3d'); if (sp3) sp3.checked = settings.page3d !== false;
+  const svk = $('#setVolumeKeys'); if (svk) svk.checked = !!settings.volumeKeys;
+  const sar = $('#setAutoReadAloud'); if (sar) sar.checked = !!settings.autoReadAloud;
+  const sdp = $('#setDefPreview'); if (sdp) sdp.checked = settings.defPreview !== false;
+  const sod = $('#setOfflineDict'); if (sod) sod.checked = settings.offlineDict !== false;
+  const ver = $('#appVersion'); if (ver) ver.textContent = 'Version ' + APP_VERSION;
   setMood('neutral');
   wire();
   renderLibrary();
   renderContinueCard();
   showScreen('home');
+  setLoadProgress(100, 'Ready');
+  setTimeout(hideLoad, 450); // keep the loading state visible long enough to see
   registerServiceWorker();
+  checkForUpdate(); // v3.1: stale-cache fix — offer reload if a newer build is live
   window.__reader = {
     state, settings,
     openEpub, openPdf, handleFile, loadChapter, playNarration, pauseNarration,
     showPage, nextSentence, prevSentence, buildSentenceSpans,
-    version: '3.0.0'
+    version: APP_VERSION
   };
 }
 document.addEventListener('DOMContentLoaded', init);
