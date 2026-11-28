@@ -144,6 +144,15 @@ button:active { transform: scale(.97); }
 .header-book { flex: 1; min-width: 0; }
 .hdr-title { font-family: Georgia, "Times New Roman", "Noto Serif Telugu", serif; font-weight: 700; font-size: 17px; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hdr-author { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* v3.6.2 (F61 — "book title and author name sariga kanipisthaledhu phone
+   lo"): the 8 header buttons are 44px each + gaps — ~430px of fixed chrome
+   on a 390px phone, so the title/author block got zero width. On phones
+   keep only Back, the title/author block, Chapters and Menu in the header;
+   Theme / Focus / Bookmark / Note / Settings move into the ⋮ reader menu,
+   where they stay reachable. Desktop is unchanged. */
+@media (max-width: 600px) {
+  #btnTheme, #btnFocus, #btnBookmark, #btnNote, #btnReaderSettings { display: none; }
+}
 .mood-strip { display: flex; align-items: center; gap: 8px; padding: 7px 14px; font-size: 13px; background: var(--surface); border-bottom: 1px solid var(--border); }
 .mood-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); display: inline-block; }
 .mini-btn { border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; font-size: 13px; background: var(--surface); min-height: 32px; }
@@ -493,6 +502,7 @@ body.focus-mode .focus-exit-btn { display: inline-flex; }
       <div class="load-track"><div id="loadFill" class="load-fill"></div></div>
       <div class="load-actions">
         <button id="btnLoadRetry" class="primary-btn hidden">↻ Retry</button>
+        <button id="btnLoadOpenAnyway" class="tool-btn hidden">Open anyway</button>
         <button id="btnLoadCancel" class="tool-btn">Cancel</button>
       </div>
     </div>
@@ -794,7 +804,7 @@ body.focus-mode .focus-exit-btn { display: inline-flex; }
       </label>
       <div class="set-row"><span data-i18n="sleepTimer">Sleep timer</span><button id="btnSleep" class="mini-btn">⏱ Set timer</button></div>
       <div class="set-note" id="kokoroNote">Voices in your browser — Kokoro for English, Google voice for Hindi and Telugu. Each voice downloads when you open a book in that language, then it works offline. No device voice or install is needed.</div>
-      <div class="set-note" id="appVersion">Version 3.6.1</div>
+      <div class="set-note" id="appVersion">Version 3.6.2</div>
       <button id="btnExportHighlights" class="tool-btn" data-i18n="exportHighlights">Export highlights</button>
     </div>
   </div>
@@ -823,9 +833,15 @@ body.focus-mode .focus-exit-btn { display: inline-flex; }
   <div id="nightOverlay" class="night-overlay"></div>
 
   <div id="toast" class="toast hidden"></div>
-  <!-- v3.1: reader 3-dot menu (Play Books): Remove bookmark, Read aloud, Settings, Help, Feedback -->
+  <!-- v3.1: reader 3-dot menu (Play Books): Bookmark, Theme, Focus, Note, Read aloud, Settings, Help, Feedback -->
+  <!-- v3.6.2 (F61): on phones the Theme / Focus / Bookmark / Note / Settings header buttons are hidden,
+       so the menu is their only path — all of them live here. The bookmark item is a toggle (its label
+       is set by updateReaderMenu when the menu opens). -->
   <div id="readerMenu" class="reader-menu hidden">
-    <button id="menuRemoveBookmark">Remove bookmark</button>
+    <button id="menuBookmark">Add bookmark</button>
+    <button id="menuTheme">Theme</button>
+    <button id="menuFocus">Focus mode</button>
+    <button id="menuNote">Add a note</button>
     <button id="menuReadAloud">Read aloud</button>
     <button id="menuSettings">Settings</button>
     <button id="menuHelp">Help</button>
@@ -920,7 +936,7 @@ window.__PDF_WORKER_SRC__ = "/**\n * @licstart The following is the entire licen
    the same number; on load the app fetches it (no-store) and, if it differs,
    shows a "New version available — Reload" banner. That is the stale-cache
    fix: a hard reload can never silently keep serving an old build. */
-const APP_VERSION = '3.6.1';
+const APP_VERSION = '3.6.2';
 
 /* ---------------- utilities ---------------- */
 const $ = s => document.querySelector(s);
@@ -1289,7 +1305,7 @@ const NEURAL = {
   abortCtl: null,                // aborts the in-flight Google fetch
 };
 const SYNTH_TIMEOUT_MS = 45000;
-const KOKORO_LOAD_TIMEOUT_MS = 300000; // v3.3 (F33): the Kokoro model is ~92 MB — a 45 s budget can never cover a first download on a slow connection. Loads get 5 min; only synthesis keeps the 45 s budget.
+const KOKORO_LOAD_TIMEOUT_MS = 900000; // v3.6.2 (F58): the Kokoro model is ~92 MB — on a slow phone connection the first download can exceed 5 min. With a now-visible progress bar (fix below) a 15-min budget is honest; the old 5-min budget killed the download and left the user with "English download eh avuthaledhu". Only synthesis keeps the 45 s budget.
 // v3.4 (fix g): prefetch 4 sentences ahead (was 2). On first play the
 // chapter audio is still downloading, so a 2-sentence buffer runs dry and
 // the narration stalls on on-demand downloads (bursts with long gaps).
@@ -1393,6 +1409,29 @@ function setNeuralStatus(msg, lang) {
   updateAudioBar();
 }
 
+// v3.6.2 (F58 — "English download eh avuthaledhu"): one normalizer for
+// Kokoro download progress, shared by the worker onmessage handler and the
+// main-thread ensureKokoro progress callback. transformers.js reports
+// {file, progress (0-100), loaded, total}; the worker used to forward ONLY
+// {loaded,total} while the handler read d.progress/d.file, so the bar sat
+// at 0% for the whole 92 MB download. Accept progress when present (0-1 or
+// 0-100), else loaded/total — never a stuck 0% while bytes are flowing.
+// The model file dominates the download, so its progress IS the bar; a tiny
+// file finishing only nudges the bar to 2% (never 0%, never backwards).
+function kokoroProgressPct(d) {
+  if (!d) return null;
+  if (typeof d.progress === 'number') return Math.round(Math.max(0, Math.min(1, d.progress > 1 ? d.progress / 100 : d.progress)) * 100);
+  if (d.total > 0) return Math.round(Math.max(0, Math.min(1, (d.loaded || 0) / d.total)) * 100);
+  return null;
+}
+function kokoroProgressToBar(d) {
+  const pct = kokoroProgressPct(d);
+  if (pct == null) return;
+  const file = String((d && d.file) || '');
+  if (file.indexOf('model') >= 0 || !file) setDlProgress('Downloading Kokoro voice', pct, 100);
+  else if (pct >= 100) setDlProgress('Downloading Kokoro voice', 2, 100);
+}
+
 /* ---------------- Kokoro in a Web Worker (v3) ---------------- */
 /* Synthesis runs off the main thread so the UI never freezes while Kokoro
    thinks. If the worker cannot start or fails, the main thread takes over
@@ -1406,7 +1445,12 @@ self.onmessage = async function (e) {
       var mod = await import('https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm');
       model = await mod.KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX', {
         dtype: 'q8', device: 'wasm',
-        progress_callback: function (p) { try { self.postMessage({ type: 'progress', loaded: p.loaded || 0, total: p.total || 0 }); } catch (err) {} }
+        // v3.6.2 (F58): forward file + normalized progress (0-1) AND
+        // loaded/total. The old code posted only {loaded,total} while the
+        // main thread read d.progress/d.file — the bar never moved from 0%
+        // for the whole 92 MB download, so the user saw "English download
+        // eh avuthaledhu". transformers.js progress is 0-100; normalize.
+        progress_callback: function (p) { try { var prog = 0; if (typeof p.progress === 'number') prog = p.progress > 1 ? p.progress / 100 : p.progress; else if (p.total) prog = (p.loaded || 0) / p.total; self.postMessage({ type: 'progress', file: p.file || '', progress: prog, loaded: p.loaded || 0, total: p.total || 0 }); } catch (err) {} }
       });
       self.postMessage({ type: 'loaded', id: d.id });
     } else if (d.type === 'synth') {
@@ -1430,21 +1474,12 @@ function kokoroWorkerStart() {
     w.onmessage = (e) => {
       const d = e.data || {};
       if (d.type === 'progress') {
-        // v3.4 (fix B): the worker posts {file, progress} — progress is a
-        // 0–1 float — but the page read d.loaded/d.total, which the worker
-        // never sends, so the bar was set to 0/0 and sat at 0% for the
-        // whole 92 MB download. Read d.progress instead. The big model
-        // file (model_quantized.onnx) dominates, so its progress is the
-        // bar; the tiny config/tokenizer files finish in milliseconds.
-        if (typeof d.progress === 'number') {
-          const file = String(d.file || '');
-          const pct = Math.round(Math.max(0, Math.min(1, d.progress)) * 100);
-          if (file.indexOf('model') >= 0) {
-            setDlProgress('Downloading Kokoro voice', pct, 100);
-          } else if (pct >= 100) {
-            setDlProgress('Downloading Kokoro voice', 2, 100);
-          }
-        }
+        // v3.6.2 (F58): the worker now posts {file, progress, loaded,
+        // total} and the handler accepts progress when present, falling
+        // back to loaded/total — see kokoroProgressToBar. The old handler
+        // read d.progress/d.file while the worker sent only loaded/total,
+        // so the bar sat at 0% for the whole 92 MB download.
+        kokoroProgressToBar(d);
         return;
       }
       const p = NEURAL.kokoroWorkerPending.get(d.id);
@@ -1574,6 +1609,11 @@ async function synthesizeKokoro(text, voice, rate, cancelled) {
       const res = await kokoroWorkerCall({ type: 'synth', text, voice, speed: rate }, SYNTH_TIMEOUT_MS);
       if (cancelled && cancelled()) throw new Error('cancelled');
       markKokoroDownloaded(voice);
+      // v3.6.2 (F59): a successful synth proves the inference path is warm —
+      // the first synth IS the warm-up. Without this, speakCurrent would
+      // flash "Preparing English voice…" before every sentence (NEURAL.kokoro
+      // is only set on the main-thread path, so the worker path needs this).
+      NEURAL.kokoroWarmed = true;
       return res;
     } catch (e) {
       if (cancelled && cancelled()) throw e;
@@ -1589,11 +1629,16 @@ async function synthesizeKokoro(text, voice, rate, cancelled) {
   // v3.3 (F33): the model is ~92 MB — a 45 s budget can never cover a first
   // download on a slow connection. The load gets the long budget; only the
   // synthesis itself keeps the 45 s budget.
-  try { tts = await withTimeout(ensureKokoro(), KOKORO_LOAD_TIMEOUT_MS, 'load Kokoro voice'); }
+  // v3.6.2 (F58): pass the progress callback — the main-thread fallback
+  // path used to load with no progress at all (ensureKokoro() with no
+  // callback), so a worker failure meant another silent 92 MB download.
+  // kokoroProgressToBar normalizes the transformers.js progress object.
+  try { tts = await withTimeout(ensureKokoro(kokoroProgressToBar), KOKORO_LOAD_TIMEOUT_MS, 'load Kokoro voice'); }
   catch (e) { const err = new Error('Voice needs one download — connect to the internet once, then it works offline.'); err.voiceLoadFailed = true; throw err; }
   if (cancelled && cancelled()) throw new Error('cancelled');
   const audio = await withTimeout(tts.generate(text, { voice, speed: rate }), SYNTH_TIMEOUT_MS, 'synthesize Kokoro');
   markKokoroDownloaded(voice);
+  NEURAL.kokoroWarmed = true; // v3.6.2 (F59): see the worker path above — a successful synth warms the inference path.
   return { samples: audio.audio, sampleRate: audio.sampling_rate || KOKORO_SAMPLE_RATE };
 }
 // v3.5 (F57 — English first audio after reload): the first English sentence
@@ -2891,6 +2936,36 @@ async function downloadLanguage(code) {
   }
   renderLangList();
 }
+// v3.6.2 (F60 — "Remove lies"): Remove must actually remove the model,
+// not just the flag. Delete every Kokoro file from the transformers cache
+// (by URL prefix, so any extra file transformers.js cached goes too) and
+// every voice bin from the kokoro-voices cache, then reset the worker +
+// in-memory model so a later download starts fresh. The old code only
+// deleted the localStorage flag — the 92 MB model stayed cached, so the
+// panel still said "✓ Downloaded" after a reload and Storage stayed put.
+async function removeKokoroModel() {
+  try {
+    if (window.caches) {
+      const tc = await caches.open('transformers-cache');
+      const keys = await tc.keys();
+      for (const req of keys) {
+        const url = req.url || '';
+        if (url.indexOf(KOKORO_MODEL_BASE) === 0) await tc.delete(req);
+      }
+      const vc = await caches.open('kokoro-voices');
+      const vkeys = await vc.keys();
+      for (const req of vkeys) {
+        const url = req.url || '';
+        if (url.indexOf(KOKORO_MODEL_BASE) === 0) await vc.delete(req);
+      }
+    }
+  } catch (e) { console.warn('Kokoro model removal failed:', e); }
+  kokoroWorkerReset();
+  NEURAL.kokoro = null;
+  NEURAL.kokoroLoading = null;
+  NEURAL.kokoroWarmed = false;
+  kokoroWarmupPromise = null;
+}
 async function removeLanguage(code) {
   const s = langDlState();
   if (code === 'te') {
@@ -2911,6 +2986,20 @@ async function removeLanguage(code) {
     delete s.hi;
     saveLangDlState(s);
     toast('Hindi offline voice removed');
+  } else if (code === 'en') {
+    // v3.6.2 (F60): delete the model + voice files, reset the worker, then
+    // VERIFY before claiming success. A removal that silently leaves the
+    // model behind is the lie the user caught (panel still "✓ Downloaded",
+    // Storage unchanged after a reload).
+    await removeKokoroModel();
+    delete s.en;
+    saveLangDlState(s);
+    const stillThere = await kokoroModelCached().catch(() => false);
+    if (stillThere) {
+      toast('English voice removal did not complete — try again');
+    } else {
+      toast('English offline voice removed');
+    }
   } else {
     delete s[code];
     saveLangDlState(s);
@@ -3436,6 +3525,15 @@ function addNote(text) {
   saveNotes(); renderNotes();
   toast('Note saved');
 }
+// v3.6.2 (F61): the note prompt, shared by the toolbar Note button and the
+// ⋮ menu — the toolbar button is hidden on phones, so the menu is the only
+// path to a note there. Same prompt as long-press.
+function promptAddNote() {
+  const s = state.sentences[state.sentenceIndex];
+  const cur = s ? s.text : '';
+  const note = window.prompt('Add a note about this passage:\n\n“' + cur.slice(0, 120) + '”');
+  if (note) addNote(note);
+}
 function renderNotes() {
   const ul = $('#noteList');
   const empty = $('#notesEmpty');
@@ -3463,6 +3561,21 @@ function removeCurrentBookmark() {
     try { localStorage.setItem('epubreader.bm.' + state.meta.id, JSON.stringify(state.bookmarks)); } catch (e) {}
     renderBookmarks(); toast('Bookmark removed');
   } else toast('No bookmark here');
+}
+// v3.6.2 (F61): the ⋮ menu bookmark is a TOGGLE — "Add bookmark" when
+// there is none here, "Remove bookmark" when there is. The label is set
+// when the menu opens (updateReaderMenu), so it always names the action
+// the tap will actually do.
+function hasCurrentBookmark() {
+  return !!state.meta && state.bookmarks.some(b => !b.auto && b.chapter === state.currentChapter && b.sentence === state.sentenceIndex);
+}
+function toggleCurrentBookmark() {
+  if (hasCurrentBookmark()) removeCurrentBookmark();
+  else addBookmark(false);
+}
+function updateReaderMenu() {
+  const b = $('#menuBookmark');
+  if (b) b.textContent = hasCurrentBookmark() ? 'Remove bookmark' : 'Add bookmark';
 }
 function updateCacheInfo() {
   const n = $('#cacheInfo');
@@ -3573,6 +3686,17 @@ async function speakCurrent() {
   scrollToSentence();
   setMood(s.mood);
   updateAudioBar();
+  // v3.6.2 (F59 — "English read avatledhu"): honest wait. On a cold session
+  // the first English sentence waits for the 92 MB model + first ONNX
+  // inference — >20 s of silence with the Pause icon showing and the
+  // counter frozen reads as "never plays". Say so in the audio bar
+  // (language-scoped 'en', so it never leaks onto a Telugu/Hindi book) and
+  // keep the top bar visible until audio actually starts. Only when Kokoro
+  // is not ready yet; a warmed voice needs no message.
+  if (langCode(lang) === 'en' && !NEURAL.kokoro && !NEURAL.kokoroWarmed) {
+    setNeuralStatus('Preparing English voice…', 'en');
+    if (!DL.active) setDlProgress('Preparing English voice…', 0, 100);
+  }
   const rate = effectiveRate();
   prefetchFrom(state.sentenceIndex + 1);
   const key = prefetchKey(state.currentChapter, state.sentenceIndex);
@@ -3669,6 +3793,10 @@ async function speakCurrent() {
   // v3.3 (F36): audio is playing, so any earlier voice error is stale — clear
   // it, or it would keep replacing the sentence counter in the audio bar.
   if (NEURAL.status) setNeuralStatus('');
+  // v3.6.2 (F59): audio actually started — the preparing wait is over. Hide
+  // the preparing bar (only the one this fix showed; a real download bar
+  // owned by prepareVoiceForBook hides itself).
+  if (DL.active && DL.label.indexOf('Preparing') === 0) hideDlBar();
   const pause = pauseAfterSentence();
   clearSentenceSpans();
   state.sentenceIndex++;
@@ -3711,6 +3839,10 @@ function pauseNarration() {
   clearTimeout(pauseTimer);
   stopNeural();
   state.speaking = false;
+  // v3.6.2 (F59): a paused reader must not stare at a stale "Preparing…"
+  // — the wait is over (the user stopped it). Other voice statuses
+  // (download / error) are left alone.
+  if (NEURAL.status && NEURAL.status.indexOf('Preparing') === 0) setNeuralStatus('');
   $('#btnPlay').textContent = '▶';
   $('#btnPlayBelow').textContent = '▶ Read aloud';
   savePosition();
@@ -3722,6 +3854,10 @@ function stopNarration(resetBtn) {
   clearTimeout(pauseTimer);
   stopNeural();
   state.speaking = false;
+  // v3.6.2 (F59): same stale-preparing clear as pauseNarration — a stopped
+  // narration (book finished, repeated failures) must not leave the
+  // "Preparing…" message in the audio bar.
+  if (NEURAL.status && NEURAL.status.indexOf('Preparing') === 0) setNeuralStatus('');
   clearSentenceSpans();
   if (resetBtn !== false) { $('#btnPlay').textContent = '▶'; $('#btnPlayBelow').textContent = '▶ Read aloud'; }
   savePosition();
@@ -4065,7 +4201,15 @@ function renderContinueCard() {
 async function reopenBook(id) {
   // v3.2 (F24): IndexedDB first, Cache API fallback — whichever holds the file.
   const rec = await loadBookFile(id);
-  if (!rec || !rec.data) { toast('Book file is no longer stored — please open it again'); return; }
+  if (!rec || !rec.data) {
+    // v3.6.2 (F62): not a toast — a dead end the user cannot recover from.
+    // Show the overlay error with a "Pick the file again" button that
+    // re-selects the same book (restoring it under the same library entry
+    // id), plus a Close option.
+    const entry = library.find(b => b.id === id);
+    await askMissingBook(entry ? entry.title : '');
+    return;
+  }
   const entry = library.find(b => b.id === id);
   showLoad('Opening book…', 20);
   const token = ++loadToken;
@@ -4114,6 +4258,82 @@ function showLoadError(msg) {
   $('#btnLoadRetry').classList.remove('hidden');
   toast(msg);
 }
+// v3.6.2 (F62 — "book ledhu no longer available"): a failed save is LOUD
+// and recoverable, not a toast. Shows the persistent overlay error with the
+// real error name and waits for the user's choice: Retry save, Open anyway
+// (read now; Continue will not work), or Cancel (stay on the home screen).
+// Resolves to 'retry' | 'open' | 'cancel'. The overlay buttons are rewired
+// for this one decision and restored when it settles, so the generic
+// showLoadError / Retry behaviour is untouched.
+function askSaveFailure(errName) {
+  return new Promise(resolve => {
+    const ov = $('#loadOverlay');
+    const retry = $('#btnLoadRetry');
+    const openAnyway = $('#btnLoadOpenAnyway');
+    const cancel = $('#btnLoadCancel');
+    if (!ov || !retry) { resolve('open'); return; }
+    ov.classList.remove('hidden');
+    $('#loadMsg').textContent = 'Could not save this book for later (' + errName + '). It is open in memory only — Continue will not work after you leave.';
+    $('#loadFill').style.width = '100%';
+    const origRetry = retry.onclick;
+    const origCancel = cancel ? cancel.onclick : null;
+    const cleanup = () => {
+      retry.onclick = origRetry;
+      if (cancel) cancel.onclick = origCancel;
+      if (openAnyway) { openAnyway.onclick = null; openAnyway.classList.add('hidden'); }
+      retry.textContent = '↻ Retry';
+    };
+    retry.textContent = '↻ Retry save';
+    retry.classList.remove('hidden');
+    retry.onclick = () => { cleanup(); hideLoad(); resolve('retry'); };
+    if (openAnyway) {
+      openAnyway.classList.remove('hidden');
+      openAnyway.onclick = () => { cleanup(); resolve('open'); };
+    }
+    if (cancel) {
+      cancel.classList.remove('hidden');
+      cancel.onclick = () => { cleanup(); hideLoad(); resolve('cancel'); };
+    }
+  });
+}
+// v3.6.2 (F62): a missing stored file is a dead end no more. Shows the
+// persistent overlay error with a "Pick the file again" button that opens
+// the file picker — re-picking the same book restores it under the same
+// library entry id (the id is a hash of title+author, and registerBook
+// updates the existing entry instead of duplicating it), so Continue works
+// again — plus a Close option. The picker is opened synchronously inside
+// the button tap (a user gesture), not after the await. Resolves to
+// 'repick' | 'close'.
+function askMissingBook(title) {
+  return new Promise(resolve => {
+    const ov = $('#loadOverlay');
+    const retry = $('#btnLoadRetry');
+    const cancel = $('#btnLoadCancel');
+    if (!ov || !retry) { resolve('close'); return; }
+    ov.classList.remove('hidden');
+    $('#loadMsg').textContent = 'Book file is no longer stored — "' + (title || 'this book') + '" was removed from this device. Pick the file again to restore it.';
+    $('#loadFill').style.width = '100%';
+    const origRetry = retry.onclick;
+    const origCancel = cancel ? cancel.onclick : null;
+    const cleanup = () => {
+      retry.onclick = origRetry;
+      if (cancel) cancel.onclick = origCancel;
+      retry.textContent = '↻ Retry';
+    };
+    retry.textContent = '📂 Pick the file again';
+    retry.classList.remove('hidden');
+    retry.onclick = () => {
+      cleanup(); hideLoad();
+      const fi = $('#fileInput');
+      if (fi) fi.click();
+      resolve('repick');
+    };
+    if (cancel) {
+      cancel.classList.remove('hidden');
+      cancel.onclick = () => { cleanup(); hideLoad(); resolve('close'); };
+    }
+  });
+}
 function hideLoad() {
   const ov = $('#loadOverlay'); if (ov) ov.classList.add('hidden');
 }
@@ -4152,7 +4372,20 @@ async function handleFile(file) {
     const saved = await saveBookFile(meta, isPdf, buf);
     if (!saved.ok) {
       console.error('book persist failed', saved.error, saved.cacheError);
-      toast('Book opened, but it could not be saved — Continue may not work. (' + (saved.error && saved.error.name ? saved.error.name : 'storage error') + ')');
+      // v3.6.2 (F62): a failed save must be LOUD and recoverable — the old
+      // code toasted and opened the reader anyway, so the user never saw
+      // the failure and "Continue" later dead-ended with "Book file is no
+      // longer stored". Clear the 30 s timer first (the user is deciding,
+      // not waiting on a load) and wait for their choice: Retry save,
+      // Open anyway (read now; Continue will not work), or Cancel.
+      clearTimeout(loadTimer);
+      const errName = (saved.error && saved.error.name) || (saved.cacheError && saved.cacheError.name) || 'storage error';
+      const choice = await askSaveFailure(errName);
+      if (token !== loadToken) return;
+      if (choice === 'retry') { handleFile(lastFile); return; }
+      if (choice === 'cancel') { hideLoad(); return; }
+      // 'open' — continue below; the user was told Continue will not work.
+      toast('Opened without saving — Continue will not work for this book');
     } else if (saved.via === 'cache') {
       console.warn('book saved to offline cache; IndexedDB failed:', saved.idbError);
       toast('Book saved to offline cache — Continue will work.');
@@ -4428,13 +4661,10 @@ function wire() {
   $('#btnFwd15').onclick = () => skipSeconds(15);
   $('#btnBookmark').onclick = () => addBookmark(false);
   // v3.4 (fix I): toolbar Note button — the tap/click path to add a note
-  // on the current sentence (same prompt as long-press).
-  $('#btnNote').onclick = () => {
-    const s = state.sentences[state.sentenceIndex];
-    const cur = s ? s.text : '';
-    const note = window.prompt('Add a note about this passage:\n\n“' + cur.slice(0, 120) + '”');
-    if (note) addNote(note);
-  };
+  // on the current sentence (same prompt as long-press). v3.6.2 (F61):
+  // shared with the ⋮ menu via promptAddNote (the toolbar button is hidden
+  // on phones, so the menu is the only path to a note there).
+  $('#btnNote').onclick = promptAddNote;
   $('#btnSleep').onclick = () => $('#sleepMenu').classList.toggle('hidden');
   $('#btnChapters').onclick = () => { const d = $('#drawer'); d.classList.contains('open') ? closeDrawer() : openDrawer(); };
   $('#btnDrawerClose').onclick = closeDrawer;
@@ -4702,12 +4932,18 @@ function wire() {
     $('#setTabLighting').classList.toggle('hidden', b.dataset.tab !== 'lighting');
   }));
   // Reader 3-dot menu (Play Books): Remove bookmark, Read aloud, Settings, Help, Feedback.
-  $('#btnMenu').onclick = ev => { ev.stopPropagation(); $('#readerMenu').classList.toggle('hidden'); };
+  $('#btnMenu').onclick = ev => { ev.stopPropagation(); updateReaderMenu(); $('#readerMenu').classList.toggle('hidden'); };
   document.addEventListener('click', ev => {
     const m = $('#readerMenu');
     if (m && !m.classList.contains('hidden') && !ev.target.closest('#readerMenu') && ev.target.id !== 'btnMenu') m.classList.add('hidden');
   });
-  $('#menuRemoveBookmark').onclick = () => { $('#readerMenu').classList.add('hidden'); removeCurrentBookmark(); };
+  // v3.6.2 (F61): on phones the Theme / Focus / Bookmark / Note / Settings
+  // header buttons are hidden (they squeezed the title to zero width), so
+  // the ⋮ menu is their only path — every one of them lives here now.
+  $('#menuBookmark').onclick = () => { $('#readerMenu').classList.add('hidden'); toggleCurrentBookmark(); };
+  $('#menuTheme').onclick = () => { $('#readerMenu').classList.add('hidden'); cycleTheme(); };
+  $('#menuFocus').onclick = () => { $('#readerMenu').classList.add('hidden'); document.body.classList.toggle('focus-mode'); };
+  $('#menuNote').onclick = () => { $('#readerMenu').classList.add('hidden'); promptAddNote(); };
   $('#menuReadAloud').onclick = () => { $('#readerMenu').classList.add('hidden'); playNarration(); };
   $('#menuSettings').onclick = () => { $('#readerMenu').classList.add('hidden'); $('#settingsSheet').classList.remove('hidden'); };
   $('#menuHelp').onclick = () => { $('#readerMenu').classList.add('hidden'); toast('Swipe or use ‹ › to turn pages. Tap a word to hear it. Touch & hold text to add a note.', 4000); };
@@ -4836,7 +5072,13 @@ function init() {
   renderContinueCard();
   showScreen('home');
   setLoadProgress(100, 'Ready');
-  setTimeout(hideLoad, 450); // keep the loading state visible long enough to see
+  // v3.6.2 (F62): token-gated. The old unconditional setTimeout(hideLoad,
+  // 450) raced any load that started within 450 ms of app start — a
+  // save-failure dialog (or any load error) shown in that window was hidden
+  // again by the init timer, so the user never saw it. Only hide the
+  // initial loading state if no load has started since init.
+  const initToken = loadToken;
+  setTimeout(() => { if (loadToken === initToken) hideLoad(); }, 450); // keep the loading state visible long enough to see
   registerServiceWorker();
   checkForUpdate(); // v3.1: stale-cache fix — offer reload if a newer build is live
   // v3.5 (F57): if the Kokoro model is already on this device, warm it up

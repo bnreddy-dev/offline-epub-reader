@@ -59,6 +59,7 @@
       <div class="load-track"><div id="loadFill" class="load-fill"></div></div>
       <div class="load-actions">
         <button id="btnLoadRetry" class="primary-btn hidden">↻ Retry</button>
+        <button id="btnLoadOpenAnyway" class="tool-btn hidden">Open anyway</button>
         <button id="btnLoadCancel" class="tool-btn">Cancel</button>
       </div>
     </div>
@@ -360,7 +361,7 @@
       </label>
       <div class="set-row"><span data-i18n="sleepTimer">Sleep timer</span><button id="btnSleep" class="mini-btn">⏱ Set timer</button></div>
       <div class="set-note" id="kokoroNote">Voices in your browser — Kokoro for English, Google voice for Hindi and Telugu. Each voice downloads when you open a book in that language, then it works offline. No device voice or install is needed.</div>
-      <div class="set-note" id="appVersion">Version 3.6.1</div>
+      <div class="set-note" id="appVersion">Version 3.6.2</div>
       <button id="btnExportHighlights" class="tool-btn" data-i18n="exportHighlights">Export highlights</button>
     </div>
   </div>
@@ -389,9 +390,15 @@
   <div id="nightOverlay" class="night-overlay"></div>
 
   <div id="toast" class="toast hidden"></div>
-  <!-- v3.1: reader 3-dot menu (Play Books): Remove bookmark, Read aloud, Settings, Help, Feedback -->
+  <!-- v3.1: reader 3-dot menu (Play Books): Bookmark, Theme, Focus, Note, Read aloud, Settings, Help, Feedback -->
+  <!-- v3.6.2 (F61): on phones the Theme / Focus / Bookmark / Note / Settings header buttons are hidden,
+       so the menu is their only path — all of them live here. The bookmark item is a toggle (its label
+       is set by updateReaderMenu when the menu opens). -->
   <div id="readerMenu" class="reader-menu hidden">
-    <button id="menuRemoveBookmark">Remove bookmark</button>
+    <button id="menuBookmark">Add bookmark</button>
+    <button id="menuTheme">Theme</button>
+    <button id="menuFocus">Focus mode</button>
+    <button id="menuNote">Add a note</button>
     <button id="menuReadAloud">Read aloud</button>
     <button id="menuSettings">Settings</button>
     <button id="menuHelp">Help</button>

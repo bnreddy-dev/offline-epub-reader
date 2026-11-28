@@ -111,6 +111,15 @@ button:active { transform: scale(.97); }
 .header-book { flex: 1; min-width: 0; }
 .hdr-title { font-family: Georgia, "Times New Roman", "Noto Serif Telugu", serif; font-weight: 700; font-size: 17px; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hdr-author { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* v3.6.2 (F61 — "book title and author name sariga kanipisthaledhu phone
+   lo"): the 8 header buttons are 44px each + gaps — ~430px of fixed chrome
+   on a 390px phone, so the title/author block got zero width. On phones
+   keep only Back, the title/author block, Chapters and Menu in the header;
+   Theme / Focus / Bookmark / Note / Settings move into the ⋮ reader menu,
+   where they stay reachable. Desktop is unchanged. */
+@media (max-width: 600px) {
+  #btnTheme, #btnFocus, #btnBookmark, #btnNote, #btnReaderSettings { display: none; }
+}
 .mood-strip { display: flex; align-items: center; gap: 8px; padding: 7px 14px; font-size: 13px; background: var(--surface); border-bottom: 1px solid var(--border); }
 .mood-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); display: inline-block; }
 .mini-btn { border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; font-size: 13px; background: var(--surface); min-height: 32px; }
