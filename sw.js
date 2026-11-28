@@ -10,6 +10,37 @@
 /* v3.2: cache name bumped so the new worker activates cleanly and the old
    build's cached audio does not linger. */
 const CACHE = 'gtts-v3';
+/* v3.6: installable PWA — cache the app shell (manifest, icons, OG banner,
+   version.json, index.html) in a SEPARATE cache so the installed app opens
+   offline. Network-first so a new deploy is never hidden behind a stale
+   shell; the cache is only the offline fallback. The TTS cache (gtts-v3) is
+   untouched — its name is never bumped here, so cached audio survives. */
+const SHELL_CACHE = 'app-shell-v1';
+const SHELL_URLS = ['./', 'index.html', 'manifest.json',
+  'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
+  'icons/apple-touch-icon.png', 'og-banner.png', 'version.json'];
+const SHELL_PATHS = ['/', '/index.html', '/manifest.json',
+  'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
+  'icons/apple-touch-icon.png', '/og-banner.png', '/version.json'];
+
+function shellPath(req) {
+  try {
+    const u = new URL(req.url);
+    if (u.origin !== self.location.origin) return null;
+    // strip the Pages sub-path scope (e.g. /offline-epub-reader) so the
+    // match works wherever the app is hosted
+    const scopePath = new URL(self.registration.scope).pathname.replace(/\/$/, '');
+    let p = u.pathname;
+    if (scopePath && p.indexOf(scopePath) === 0) p = p.slice(scopePath.length) || '/';
+    return p;
+  } catch (e) { return null; }
+}
+function isShellRequest(req) {
+  if (req.method !== 'GET') return false;
+  if (req.mode === 'navigate') return true;
+  const p = shellPath(req);
+  return p !== null && SHELL_PATHS.indexOf(p) >= 0;
+}
 // v3.4 (fix A): 120 entries barely held ONE chapter (~98 sentences), so
 // warming the current chapter + the next 2 (the app's prefetch) evicted the
 // chapter the user was reading — every library re-open re-downloaded the
@@ -21,6 +52,14 @@ const TTS_HOSTS = ['translate.google.com', 'translate.googleapis.com'];
 
 self.addEventListener('install', event => {
   self.skipWaiting();
+  event.waitUntil((async () => {
+    try {
+      const cache = await caches.open(SHELL_CACHE);
+      await Promise.all(SHELL_URLS.map(async u => {
+        try { await cache.add(u); } catch (e) { /* best-effort: one missing file must not fail install */ }
+      }));
+    } catch (e) { /* best-effort only */ }
+  })());
 });
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {
@@ -29,6 +68,8 @@ self.addEventListener('activate', event => {
     // the app's book-file Cache API fallback lives in its own cache).
     const names = await caches.keys();
     await Promise.all(names.filter(n => n !== CACHE && n.indexOf('gtts-') === 0).map(n => caches.delete(n)));
+    // drop old app-shell caches from earlier versions
+    await Promise.all(names.filter(n => n !== SHELL_CACHE && n.indexOf('app-shell-') === 0).map(n => caches.delete(n)));
   })());
 });
 
@@ -55,6 +96,24 @@ async function trimCache() {
 
 self.addEventListener('fetch', event => {
   const req = event.request;
+  // v3.6: app shell — network-first, cache is only the offline fallback.
+  if (isShellRequest(req)) {
+    event.respondWith((async () => {
+      try {
+        const res = await fetch(req);
+        if (res && res.status === 200 && req.cache !== 'no-store') {
+          const cache = await caches.open(SHELL_CACHE);
+          cache.put(req, res.clone()).catch(() => {});
+        }
+        return res;
+      } catch (e) {
+        const hit = await caches.match(req, { ignoreSearch: true });
+        if (hit) return hit;
+        throw e;
+      }
+    })());
+    return;
+  }
   if (req.method !== 'GET' || !isTtsRequest(req)) return;
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);

@@ -32,7 +32,7 @@
    the same number; on load the app fetches it (no-store) and, if it differs,
    shows a "New version available — Reload" banner. That is the stale-cache
    fix: a hard reload can never silently keep serving an old build. */
-const APP_VERSION = '3.5.0';
+const APP_VERSION = '3.6.0';
 
 /* ---------------- utilities ---------------- */
 const $ = s => document.querySelector(s);
