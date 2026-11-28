@@ -772,7 +772,7 @@ body.focus-mode .focus-exit-btn { display: inline-flex; }
       </label>
       <div class="set-row"><span data-i18n="sleepTimer">Sleep timer</span><button id="btnSleep" class="mini-btn">⏱ Set timer</button></div>
       <div class="set-note" id="kokoroNote">Voices in your browser — Kokoro for English, Google voice for Hindi and Telugu. Each voice downloads when you open a book in that language, then it works offline. No device voice or install is needed.</div>
-      <div class="set-note" id="appVersion">Version 3.4.0</div>
+      <div class="set-note" id="appVersion">Version 3.5.0</div>
       <button id="btnExportHighlights" class="tool-btn" data-i18n="exportHighlights">Export highlights</button>
     </div>
   </div>
@@ -898,7 +898,7 @@ window.__PDF_WORKER_SRC__ = "/**\n * @licstart The following is the entire licen
    the same number; on load the app fetches it (no-store) and, if it differs,
    shows a "New version available — Reload" banner. That is the stale-cache
    fix: a hard reload can never silently keep serving an old build. */
-const APP_VERSION = '3.4.0';
+const APP_VERSION = '3.5.0';
 
 /* ---------------- utilities ---------------- */
 const $ = s => document.querySelector(s);
@@ -1253,6 +1253,8 @@ const NEURAL = {
   kokoro: null, kokoroLoading: null,
   kokoroWorker: null, kokoroWorkerFailed: false, kokoroWorkerReady: null,
   kokoroWorkerSeq: 0, kokoroWorkerPending: new Map(),
+  kokoroWarmed: false,          // v3.5 (F57): first-inference warm-up done this session
+  kokoroWarmupAttempts: 0,      // v3.5 (F57): warm-up runs started (observable for tests)
   audioEl: null,                 // single <audio> for Kokoro (PCM) playback
   wordTimer: null,
   playToken: 0,                  // bump to cancel in-flight playback
@@ -1571,6 +1573,40 @@ async function synthesizeKokoro(text, voice, rate, cancelled) {
   const audio = await withTimeout(tts.generate(text, { voice, speed: rate }), SYNTH_TIMEOUT_MS, 'synthesize Kokoro');
   markKokoroDownloaded(voice);
   return { samples: audio.audio, sampleRate: audio.sampling_rate || KOKORO_SAMPLE_RATE };
+}
+// v3.5 (F57 — English first audio after reload): the first English sentence
+// after a reload waited >30 s in silence. The worker + 92 MB model + first
+// ONNX inference all load LAZILY on the first Play, so the user waits for
+// the whole load. Warm them up in the background as soon as English is
+// known to be wanted, so the first real Play is just a fast synth. The
+// model loads from the transformers cache — never re-downloaded. The
+// warm-up synth only warms the inference path; its audio is discarded and
+// it never marks the voice "downloaded" (only a sentence that actually
+// PLAYS does that). A failed warm-up is silent — Play loads the voice on
+// demand as before. Runs at most once per session.
+let kokoroWarmupPromise = null;
+async function warmUpKokoro() {
+  if (NEURAL.kokoroWarmed) return true;
+  if (kokoroWarmupPromise) return kokoroWarmupPromise;
+  NEURAL.kokoroWarmupAttempts++;
+  kokoroWarmupPromise = (async () => {
+    try {
+      await withTimeout(ensureKokoroWorker(), KOKORO_LOAD_TIMEOUT_MS, 'warm up Kokoro voice');
+      // First inference is the slow one (ONNX kernel warm-up). Synthesize
+      // one short word now, in the background, and throw the audio away —
+      // so the first sentence the user actually hears starts promptly.
+      await kokoroWorkerCall({ type: 'synth', text: 'Hello', voice: neuralVoiceFor('en'), speed: 1 }, SYNTH_TIMEOUT_MS);
+      NEURAL.kokoroWarmed = true;
+      return true;
+    } catch (e) {
+      // Never break the app and never show an error for a background
+      // warm-up. Reset so a later book-open can try again.
+      kokoroWarmupPromise = null;
+      console.warn('Kokoro warm-up failed (Play will load the voice on demand):', e);
+      return false;
+    }
+  })();
+  return kokoroWarmupPromise;
 }
 
 /* ---------------- Google Telugu voice (v3) ---------------- */
@@ -2495,6 +2531,11 @@ async function prepareVoiceForBook() {
       if (!already) setDlProgress('Downloading ' + langDisplayName(lang) + ' voice', 0, 100);
       try {
         await withTimeout(ensureKokoroWorker(), KOKORO_LOAD_TIMEOUT_MS, 'load Kokoro voice');
+        // v3.5 (F57): warm the first inference now that the worker is up,
+        // so the first Play is prompt. Fire-and-forget — it must not delay
+        // the download bar / status flow below. (If app-load warm-up already
+        // ran, this is a no-op.)
+        warmUpKokoro().catch(() => {});
         if (myToken !== VOICE_PREP.token) return;
         // v3.4 (fix a): verify the model is actually persisted now. If the
         // transformers cache does not hold it, pre-cache it explicitly so
@@ -4776,6 +4817,13 @@ function init() {
   setTimeout(hideLoad, 450); // keep the loading state visible long enough to see
   registerServiceWorker();
   checkForUpdate(); // v3.1: stale-cache fix — offer reload if a newer build is live
+  // v3.5 (F57): if the Kokoro model is already on this device, warm it up
+  // in the background NOW (worker + model + first inference), so the first
+  // English Play after a reload starts promptly instead of waiting ~30 s
+  // in silence. Only runs when the model is cached — never downloads for a
+  // user who has never used English. Fire-and-forget; a failure is silent
+  // and Play loads the voice on demand.
+  kokoroModelCached().then(cached => { if (cached) warmUpKokoro().catch(() => {}); }).catch(() => {});
   window.__reader = {
     state, settings,
     openEpub, openPdf, handleFile, loadChapter, playNarration, pauseNarration,
