@@ -32,7 +32,7 @@
    the same number; on load the app fetches it (no-store) and, if it differs,
    shows a "New version available — Reload" banner. That is the stale-cache
    fix: a hard reload can never silently keep serving an old build. */
-const APP_VERSION = '3.2.0';
+const APP_VERSION = '3.3.0';
 
 /* ---------------- utilities ---------------- */
 const $ = s => document.querySelector(s);
@@ -137,34 +137,49 @@ async function bookCacheGet(id) {
   if (!buf || !buf.byteLength) return null;
   return buf;
 }
+/* v3.3 (F35 — root cause): a saved book must survive a single store failing.
+   v3/v3.1/v3.2 wrote the file to ONE store only (IndexedDB, else Cache API
+   as a fallback) — when that one store lost the record, the book was gone
+   and "Continue" broke, with no copy anywhere to recover from. Now the file
+   is written to BOTH stores and each copy is verified by reading it back.
+   A book is reported saved only when at least one verified copy exists. */
 async function saveBookFile(meta, isPdf, buf) {
+  let idbOk = false, cacheOk = false, idbErr = null, cacheErr = null;
   try {
     await idbPut('books', { id: meta.id, type: isPdf ? 'pdf' : 'epub', data: buf, title: meta.title });
     const check = await idbGet('books', meta.id);
     if (!check || !check.data) throw new Error('save did not stick');
-    return { ok: true, via: 'idb' };
-  } catch (e) {
-    const idbErr = e;
-    try {
-      try { localStorage.setItem('epubreader.bookmeta.' + meta.id, JSON.stringify({ type: isPdf ? 'pdf' : 'epub', title: meta.title })); } catch (e2) {}
-      await bookCachePut(meta.id, buf);
-      const check = await bookCacheGet(meta.id);
-      if (!check) throw new Error('cache save did not stick');
-      return { ok: true, via: 'cache', idbError: idbErr };
-    } catch (e2) {
-      return { ok: false, via: null, error: idbErr, cacheError: e2 };
-    }
-  }
+    idbOk = true;
+  } catch (e) { idbErr = e; }
+  try {
+    try { localStorage.setItem('epubreader.bookmeta.' + meta.id, JSON.stringify({ type: isPdf ? 'pdf' : 'epub', title: meta.title })); } catch (e2) {}
+    await bookCachePut(meta.id, buf);
+    const check = await bookCacheGet(meta.id);
+    if (!check) throw new Error('cache save did not stick');
+    cacheOk = true;
+  } catch (e2) { cacheErr = e2; }
+  if (idbOk || cacheOk) return { ok: true, via: idbOk && cacheOk ? 'idb+cache' : (idbOk ? 'idb' : 'cache'), idbError: idbErr, cacheError: cacheErr };
+  return { ok: false, via: null, error: idbErr, cacheError: cacheErr };
 }
 async function loadBookFile(id) {
   const rec = await idbGet('books', id).catch(() => null);
-  if (rec && rec.data) return rec;
   const buf = await bookCacheGet(id).catch(() => null);
+  // v3.3 (F35): self-heal — if one store lost the file but the other still
+  // has it, restore the missing copy at once so the loss never repeats.
+  if (rec && rec.data && !buf) {
+    bookCachePut(id, rec.data).catch(() => {});
+    try { localStorage.setItem('epubreader.bookmeta.' + id, JSON.stringify({ type: rec.type || 'epub', title: rec.title || '' })); } catch (e) {}
+    return rec;
+  }
   if (buf) {
     let bm = null;
     try { bm = JSON.parse(localStorage.getItem('epubreader.bookmeta.' + id) || 'null'); } catch (e) {}
+    if (!rec || !rec.data) {
+      idbPut('books', { id, type: (bm && bm.type) || 'epub', data: buf, title: (bm && bm.title) || '' }).catch(() => {});
+    }
     return { id, type: (bm && bm.type) || 'epub', data: buf, title: (bm && bm.title) || '' };
   }
+  if (rec && rec.data) return rec;
   return null;
 }
 
@@ -292,16 +307,21 @@ const NEURAL = {
   narrationToken: 0,             // bump to invalidate a stale narration loop
   consecFail: 0,
   status: '',
+  statusLang: null,              // v3.3 (F36): the language a status belongs to — a Kokoro (en) error must never show on a Telugu/Hindi book
   abortCtl: null,                // aborts the in-flight Google fetch
 };
 const SYNTH_TIMEOUT_MS = 45000;
+const KOKORO_LOAD_TIMEOUT_MS = 300000; // v3.3 (F33): the Kokoro model is ~92 MB — a 45 s budget can never cover a first download on a slow connection. Loads get 5 min; only synthesis keeps the 45 s budget.
 const PREFETCH_AHEAD = 2;
 const MAX_CHUNK_CHARS = 180;
 const MAX_CONSEC_FAIL = 3;
 const KOKORO_MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX';
 const KOKORO_VOICES = {
+  // v3.3 (F32): Kokoro is English-only. kokoro-js 1.2.1's voice list has no
+  // Hindi voices (hf_alpha/hf_beta are not in it) and its phonemizer is
+  // English-only, so Hindi uses Google TTS instead. Do not re-add Hindi
+  // voices here — they cannot play through kokoro-js.
   en: ['af_bella', 'af_heart', 'af_sky', 'am_adam', 'am_michael'],
-  hi: ['hf_alpha', 'hf_beta', 'hm_omega', 'hm_psi'],
 };
 const KOKORO_SAMPLE_RATE = 24000;
 /* Google Telugu: per-sentence audio, small and incremental. One sentence is
@@ -315,8 +335,8 @@ let gtLastFetchAt = 0;
 
 function langCode(lang) { return (lang || 'en').toLowerCase().slice(0, 2); }
 function neuralVoiceFor(lang) {
-  const code = langCode(lang);
-  if (code === 'hi') return 'hf_alpha';
+  // v3.3 (F32): Kokoro is English-only now — Hindi uses Google TTS (see
+  // synthesizeNeural). kokoro-js 1.2.1 has no Hindi voice in its list.
   return 'af_bella';
 }
 function hasVoiceFor(lang) { return ['en', 'hi', 'te'].indexOf(langCode(lang)) >= 0; }
@@ -378,10 +398,14 @@ function hideDlBar() {
   DL.active = false;
   bar.classList.add('hidden');
 }
-function setNeuralStatus(msg) {
+// v3.3 (F36): a voice error belongs to ONE language. setNeuralStatus takes
+// the language it is about; updateAudioBar only shows it for a book in that
+// language, so a Kokoro (English) failure never haunts a Telugu/Hindi book.
+function setNeuralStatus(msg, lang) {
   NEURAL.status = msg || '';
+  NEURAL.statusLang = msg ? (langCode(lang || '') || null) : null;
   const n = $('#kokoroNote');
-  if (n) n.textContent = msg || 'Voices in your browser — Kokoro (English/Hindi) + Google Telugu. The book\u2019s language is detected automatically; its voice downloads when you open the book.';
+  if (n) n.textContent = msg || 'Voices in your browser — Kokoro (English) + Google Telugu/Hindi. The book\u2019s language is detected automatically; its voice downloads when you open the book.';
   updateVoicePanel();
   updateAudioBar();
 }
@@ -465,7 +489,7 @@ function kokoroWorkerCall(msg, timeoutMs) {
 async function ensureKokoroWorker() {
   if (NEURAL.kokoroWorkerReady) return NEURAL.kokoroWorkerReady;
   NEURAL.kokoroWorkerReady = (async () => {
-    await kokoroWorkerCall({ type: 'load' }, 180000);
+    await kokoroWorkerCall({ type: 'load' }, KOKORO_LOAD_TIMEOUT_MS);
     return true;
   })().catch(err => {
     kokoroWorkerFail(err);
@@ -477,7 +501,7 @@ async function ensureKokoroWorker() {
 async function ensureKokoro(progressCb) {
   if (NEURAL.kokoro) return NEURAL.kokoro;
   if (NEURAL.kokoroLoading) return NEURAL.kokoroLoading;
-  setNeuralStatus('Downloading Kokoro voice… (one-time, about 90 MB)');
+  setNeuralStatus('Downloading Kokoro voice… (one-time, about 90 MB)', 'en');
   NEURAL.kokoroLoading = (async () => {
     const mod = await import('https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm');
     const KokoroTTS = mod.KokoroTTS;
@@ -492,28 +516,61 @@ async function ensureKokoro(progressCb) {
     return tts;
   })().catch(err => {
     NEURAL.kokoroLoading = null;
-    setNeuralStatus('Kokoro voice could not load — connect to the internet once to download it.');
+    setNeuralStatus('Kokoro voice could not load — connect to the internet once to download it.', 'en');
     throw err;
   });
   return NEURAL.kokoroLoading;
 }
+// v3.3 (F33): a voice that PLAYS is a voice that is DOWNLOADED — mark it, so
+// the Languages panel and the one-time-loading rule see the truth after a
+// reload and after opening a different book in the same language.
+function markKokoroDownloaded(voice) {
+  const code = voice === 'af_bella' ? 'en' : null;
+  if (!code) return;
+  try {
+    const st = langDlState(); st[code] = { downloaded: true, at: Date.now() }; saveLangDlState(st);
+  } catch (e) {}
+}
+// v3.3 (F33 / one-time loading): a sentence that ACTUALLY PLAYS proves its
+// voice is downloaded — mark it here, in the narration loop, not only inside
+// the synth function. The synth path varies (worker, main thread, or a
+// stubbed synth in tests), but a played sentence is the one signal that is
+// true on every path. Without this, a voice that played fine still showed
+// "Not downloaded" after a reload and re-downloaded on the next book.
+function markLanguageDownloaded(lang) {
+  const code = langCode(lang);
+  if (!code) return;
+  try {
+    const st = langDlState(); st[code] = { downloaded: true, at: Date.now() }; saveLangDlState(st);
+  } catch (e) {}
+}
 async function synthesizeKokoro(text, voice, rate, cancelled) {
   if (!NEURAL.kokoroWorkerFailed) {
     try {
-      await withTimeout(ensureKokoroWorker(), 180000, 'load Kokoro voice');
+      await withTimeout(ensureKokoroWorker(), KOKORO_LOAD_TIMEOUT_MS, 'load Kokoro voice');
       const res = await kokoroWorkerCall({ type: 'synth', text, voice, speed: rate }, SYNTH_TIMEOUT_MS);
       if (cancelled && cancelled()) throw new Error('cancelled');
+      markKokoroDownloaded(voice);
       return res;
     } catch (e) {
       if (cancelled && cancelled()) throw e;
-      kokoroWorkerFail(e); // fall back to the main thread, once
+      // v3.3 (F32/F33): a SYNTH failure must NEVER kill the worker. The old
+      // code called kokoroWorkerFail() here, so one bad voice (Hindi's
+      // 'Voice "hf_alpha" not found') terminated the worker and poisoned
+      // EVERY Kokoro voice for the session. A synth failure just falls
+      // through to the main thread; only a worker LOAD failure poisons it.
+      console.warn('Kokoro worker synth failed, trying main thread:', e);
     }
   }
   let tts;
-  try { tts = await withTimeout(ensureKokoro(), SYNTH_TIMEOUT_MS, 'load Kokoro voice'); }
+  // v3.3 (F33): the model is ~92 MB — a 45 s budget can never cover a first
+  // download on a slow connection. The load gets the long budget; only the
+  // synthesis itself keeps the 45 s budget.
+  try { tts = await withTimeout(ensureKokoro(), KOKORO_LOAD_TIMEOUT_MS, 'load Kokoro voice'); }
   catch (e) { const err = new Error('Voice needs one download — connect to the internet once, then it works offline.'); err.voiceLoadFailed = true; throw err; }
   if (cancelled && cancelled()) throw new Error('cancelled');
   const audio = await withTimeout(tts.generate(text, { voice, speed: rate }), SYNTH_TIMEOUT_MS, 'synthesize Kokoro');
+  markKokoroDownloaded(voice);
   return { samples: audio.audio, sampleRate: audio.sampling_rate || KOKORO_SAMPLE_RATE };
 }
 
@@ -710,8 +767,13 @@ async function synthesizeNeural(text, lang, opts) {
   opts = opts || {};
   const clean = sanitizeForSpeech(text, lang);
   if (!hasSpeakable(clean)) return { empty: true };
-  if (langCode(lang) === 'te') {
-    // Google Telugu: one audio element per chunk; chunks play back to back.
+  if (langCode(lang) === 'te' || langCode(lang) === 'hi') {
+    // v3.3 (F32): Google voice for Telugu AND Hindi. Kokoro cannot speak
+    // Hindi — kokoro-js 1.2.1's voice list has 28 voices and zero Hindi
+    // (no hf_alpha/hf_beta), and its phonemizer is English-only, so every
+    // Hindi synth threw 'Voice "hf_alpha" not found'. Google Hindi is a
+    // natural voice on the same proven audio-element pipeline as Telugu.
+    // (One audio element per chunk; chunks play back to back.)
     const chunks = chunkForSpeech(clean, GT_CHUNK_CHARS);
     const parts = [];
     for (let i = 0; i < chunks.length; i++) {
@@ -1071,7 +1133,7 @@ async function openEpub(arrayBuffer, fileName) {
   const author = (md.creator || 'Unknown author').toString();
   const subtitle = (md.description || '').toString().slice(0, 200);
   const lang = normaliseLang(md.language) || null;
-  const coverUrl = await getCoverUrl(book).catch(() => null);
+  const coverUrl = await coverToDataUrl(await getCoverUrl(book).catch(() => null));
   const tocFlat = [];
   (function walk(items) { (items || []).forEach(it => { tocFlat.push(it); if (it.subitems) walk(it.subitems); }); })(book.navigation.toc || []);
   const hrefToSpine = {};
@@ -1117,6 +1179,27 @@ async function getCoverUrl(book) {
     const url = await book.coverUrl();
     return url || null;
   } catch (e) { return null; }
+}
+/* v3.3 (F35): a cover stored as a blob: URL dies on reload (the URL is only
+   valid in the page that created it), so the library card showed a broken
+   image after a reload. Store the cover as a small JPEG data URL instead —
+   it survives reloads, and at ~200 px wide it is only ~10–20 KB. On any
+   failure the original URL is kept, so the cover still shows in-session. */
+async function coverToDataUrl(url) {
+  if (!url || url.indexOf('blob:') !== 0) return url;
+  try {
+    const blob = await (await fetch(url)).blob();
+    const bmp = await createImageBitmap(blob);
+    const maxW = 200;
+    const scale = Math.min(1, maxW / bmp.width);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bmp.width * scale));
+    canvas.height = Math.max(1, Math.round(bmp.height * scale));
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    if (bmp.close) bmp.close();
+    return canvas.toDataURL('image/jpeg', 0.8);
+  } catch (e) { return url; }
 }
 async function resolveImageUrl(book, src) {
   try {
@@ -1285,8 +1368,14 @@ async function prepareVoiceForBook() {
   VOICE_PREP.lang = lang;
   VOICE_PREP.running = true;
   try {
-    if (lang === 'te') {
-      await warmChapterAudio(state.currentChapter, myToken, true);
+    if (lang === 'te' || lang === 'hi') {
+      // v3.3 (F32): Google voice for Telugu AND Hindi.
+      const ok = await warmChapterAudio(state.currentChapter, myToken, true);
+      if (ok && myToken === VOICE_PREP.token) {
+        // v3.3 (F36): audio that warmed is audio that is downloaded — mark
+        // it, so the Languages panel tells the truth after a reload.
+        const st = langDlState(); st[lang] = { downloaded: true, at: Date.now() }; saveLangDlState(st);
+      }
       if (myToken !== VOICE_PREP.token) return;
       // v3.1: warm only the NEXT 2 chapters quietly (no top bar). Warming the
       // whole book in the background would saturate a slow connection (~0.3
@@ -1298,19 +1387,33 @@ async function prepareVoiceForBook() {
         await sleep(50);
       }
     } else {
-      // Kokoro model, once. Progress shows on the top bar.
-      setDlProgress('Downloading ' + langDisplayName(lang) + ' voice', 0, 100);
+      // Kokoro model, once. v3.3 (F33 / one-time loading): a voice that is
+      // already downloaded must NOT show a fresh download bar — just make
+      // sure the worker is up, quietly. A downloaded voice stays downloaded
+      // across reloads and across books in the same language.
+      const already = langDlStatus(lang) === 'downloaded';
+      if (!already) setDlProgress('Downloading ' + langDisplayName(lang) + ' voice', 0, 100);
       try {
-        await withTimeout(ensureKokoroWorker(), 180000, 'load Kokoro voice');
+        await withTimeout(ensureKokoroWorker(), KOKORO_LOAD_TIMEOUT_MS, 'load Kokoro voice');
         if (myToken !== VOICE_PREP.token) return;
-        setDlMessage(langDisplayName(lang) + ' voice ready');
-        setTimeout(() => { if (myToken === VOICE_PREP.token) hideDlBar(); }, 1200);
+        if (!already) {
+          const st = langDlState(); st[lang] = { downloaded: true, at: Date.now() }; saveLangDlState(st);
+          setDlMessage(langDisplayName(lang) + ' voice ready');
+          setTimeout(() => { if (myToken === VOICE_PREP.token) hideDlBar(); }, 1200);
+        }
       } catch (e) {
         // worker failed — the main-thread load is the fallback; it shows its
         // own status. Never a silent failure, never a device voice.
+        // v3.3 (F33 / E10): but ONLY when the voice is not already
+        // downloaded. A downloaded voice must never pop a fresh download
+        // bar on a quiet worker re-check — the bar is for downloads, and
+        // this voice is already downloaded. Playback surfaces its own
+        // error if the voice genuinely cannot synthesise.
         if (myToken !== VOICE_PREP.token) return;
-        setDlMessage('Kokoro voice needs one download — connect to the internet once');
-        setTimeout(() => { if (myToken === VOICE_PREP.token) hideDlBar(); }, 4000);
+        if (!already) {
+          setDlMessage('Kokoro voice needs one download — connect to the internet once');
+          setTimeout(() => { if (myToken === VOICE_PREP.token) hideDlBar(); }, 4000);
+        }
       }
     }
   } finally {
@@ -1323,14 +1426,17 @@ async function prepareVoiceForBook() {
    is retried once after a short backoff; if it still fails the chapter keeps
    going — one bad line never blocks the rest. */
 async function warmChapterAudio(chIdx, token, showBar) {
-  if (!state.meta || langCode(state.meta.language) !== 'te') return;
+  // v3.3 (F32): Google voice covers Telugu AND Hindi now (Kokoro cannot do
+  // Hindi). The chapter audio is warmed the same way for both languages.
+  const lang = state.meta ? langCode(state.meta.language) : '';
+  if (!state.meta || (lang !== 'te' && lang !== 'hi')) return;
   const rec = await loadChapterText(chIdx).catch(() => null);
   if (!rec || token !== VOICE_PREP.token) return;
   const mood = moodOfChapter(state.chapters[chIdx]);
   const sentences = parasToSentences(rec.paras, mood).filter(s => s.text && !s.image);
   const total = sentences.length;
   if (!total) return;
-  const label = 'Downloading Telugu voice — Chapter ' + (chIdx + 1);
+  const label = 'Downloading ' + langDisplayName(lang) + ' voice — Chapter ' + (chIdx + 1);
   let ready = 0; // sentences ACTUALLY buffered — a failed fetch never counts
   // one pass over a list of sentence indices; returns the indices that failed.
   // v3.1 CIRCUIT BREAKER: if 3 sentences fail in a row the link is down
@@ -1344,14 +1450,14 @@ async function warmChapterAudio(chIdx, token, showBar) {
       if (token !== VOICE_PREP.token || !state.meta) return null;
       if (consecFail >= 3) { stillFailed.push(i); continue; }
       const s = sentences[i];
-      const clean = sanitizeForSpeech(s.text, 'te');
+      const clean = sanitizeForSpeech(s.text, lang);
       if (!hasSpeakable(clean)) { ready++; if (showBar) setDlProgress(label, ready, total); continue; }
       const chunks = chunkForSpeech(clean, GT_CHUNK_CHARS);
       let ok = true;
       for (let ci = 0; ci < chunks.length; ci++) {
         if (token !== VOICE_PREP.token) return null;
         const key = state.meta.id + '::' + chIdx + '::' + i + '::c' + ci;
-        const got = await gtPrepare(key, chunks[ci], 'te');
+        const got = await gtPrepare(key, chunks[ci], lang);
         if (!got) {
           // v3.2: retry once after a backoff — but ONLY for a fast error.
           // A 'timeout' means the link is hung/dead; retrying it just burns
@@ -1361,7 +1467,7 @@ async function warmChapterAudio(chIdx, token, showBar) {
           if (GT_LAST_FAIL === 'timeout') { ok = false; break; }
           await sleep(2000);
           if (token !== VOICE_PREP.token) return null;
-          const got2 = await gtPrepare(key, chunks[ci], 'te');
+          const got2 = await gtPrepare(key, chunks[ci], lang);
           if (!got2) { ok = false; break; }
         }
         // throttle so Google never 403s us
@@ -1394,13 +1500,13 @@ async function warmChapterAudio(chIdx, token, showBar) {
   // reported as "downloaded" (downloadLanguage relies on this).
   if (!showBar) return failed.length === 0;
   if (!failed.length) {
-    setDlMessage('Telugu voice ready — Chapter ' + (chIdx + 1));
+    setDlMessage(langDisplayName(lang) + ' voice ready — Chapter ' + (chIdx + 1));
     setTimeout(() => { if (token === VOICE_PREP.token) hideDlBar(); }, 1200);
   } else {
     // HONEST failure state: never claim "ready" when it is not. The bar
     // stays visible at the true % so the user SEES the download did not
     // finish — the remaining sentences download when he listens.
-    setDlMessage('Telugu voice: ' + ready + ' of ' + total + ' downloaded — connection is slow or offline. The rest will download when you listen.', (ready / total) * 100);
+    setDlMessage(langDisplayName(lang) + ' voice: ' + ready + ' of ' + total + ' downloaded — connection is slow or offline. The rest will download when you listen.', (ready / total) * 100);
   }
   return failed.length === 0;
 }
@@ -1417,35 +1523,57 @@ function langDlState() {
 function saveLangDlState(s) { try { localStorage.setItem(LANG_DL_KEY, JSON.stringify(s)); } catch (e) {} }
 function langDlStatus(code) {
   const s = langDlState();
-  if (code === 'te') {
-    // Telugu is "downloaded" when the current book's first chapter audio is buffered
-    return s.te && s.te.downloaded ? 'downloaded' : 'not';
+  // v3.3 (F32): Telugu AND Hindi are Google voices — "downloaded" when the
+  // flag was set by a successful warm/download.
+  if (code === 'te' || code === 'hi') {
+    return s[code] && s[code].downloaded ? 'downloaded' : 'not';
   }
   if (NEURAL.kokoro) return 'downloaded';
   return (s[code] && s[code].downloaded) ? 'downloaded' : 'not';
 }
+// v3.3 (F33): kokoro-js loads voice files from the Cache API cache named
+// 'kokoro-voices', keyed by the full HuggingFace URL. Pre-cache the voice
+// file there so it persists across reloads and the first synth never needs
+// the network. Best-effort: a failure here does not fail the download —
+// kokoro-js fetches the voice on demand if the cache misses.
+const KOKORO_VOICE_URL = id => 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/voices/' + id + '.bin';
+async function precacheKokoroVoice(voiceId) {
+  try {
+    if (!window.caches) return false;
+    const cache = await caches.open('kokoro-voices');
+    const url = KOKORO_VOICE_URL(voiceId);
+    if (await cache.match(url)) return true;
+    const res = await fetch(url);
+    if (!res || !res.ok) return false;
+    await cache.put(url, res.clone());
+    return true;
+  } catch (e) { console.warn('Kokoro voice pre-cache failed:', e); return false; }
+}
 async function downloadLanguage(code) {
   const s = langDlState();
-  if (code === 'te') {
-    // Pre-buffer the current book's audio (or the first chapter if no book).
-    // Progress shows on the top bar; the Service Worker also caches it.
-    if (!state.meta) { toast('Open a book first — Telugu downloads with the book'); return; }
-    setDlProgress('Downloading Telugu voice', 0, 100);
+  // v3.3 (F32): Google voices — Telugu AND Hindi. Pre-buffer the current
+  // book's audio (or the first chapter if no book). Progress shows on the
+  // top bar; the Service Worker also caches it.
+  if (code === 'te' || code === 'hi') {
+    if (!state.meta) { toast('Open a book first — ' + langDisplayName(code) + ' downloads with the book'); return; }
+    if (langCode(state.meta.language) !== code) { toast('Open a ' + langDisplayName(code) + ' book first — the voice downloads with its book'); return; }
+    setDlProgress('Downloading ' + langDisplayName(code) + ' voice', 0, 100);
     const token = ++VOICE_PREP.token;
     const ok = await warmChapterAudio(state.currentChapter, token, true).catch(() => false);
     if (ok) {
-      const st = langDlState(); st.te = { downloaded: true, at: Date.now() }; saveLangDlState(st);
-      toast('Telugu voice downloaded for offline');
+      const st = langDlState(); st[code] = { downloaded: true, at: Date.now() }; saveLangDlState(st);
+      toast(langDisplayName(code) + ' voice downloaded for offline');
     } else {
-      toast('Telugu download did not finish — check your connection and try again');
+      toast(langDisplayName(code) + ' download did not finish — check your connection and try again');
     }
     renderLangList();
     return;
   }
-  // Kokoro (English/Hindi): download + cache the model once.
+  // Kokoro (English only since v3.3 — Hindi uses Google): download + cache the model once.
   setDlProgress('Downloading ' + langDisplayName(code) + ' voice', 0, 100);
   try {
-    await withTimeout(ensureKokoroWorker(), 180000, 'load Kokoro voice');
+    await withTimeout(ensureKokoroWorker(), KOKORO_LOAD_TIMEOUT_MS, 'load Kokoro voice');
+    await precacheKokoroVoice(neuralVoiceFor(code));
     const st = langDlState(); st[code] = { downloaded: true, at: Date.now() }; saveLangDlState(st);
     setDlMessage(langDisplayName(code) + ' voice downloaded');
     setTimeout(hideDlBar, 1200);
@@ -1471,6 +1599,12 @@ async function removeLanguage(code) {
     delete s.te;
     saveLangDlState(s);
     toast('Telugu offline voice removed');
+  } else if (code === 'hi') {
+    // v3.3 (F32): Hindi is a Google voice now. Only the flag is removed —
+    // the shared Google audio cache is left alone so Telugu audio survives.
+    delete s.hi;
+    saveLangDlState(s);
+    toast('Hindi offline voice removed');
   } else {
     delete s[code];
     saveLangDlState(s);
@@ -1482,7 +1616,7 @@ function renderLangList() {
   const list = $('#langList');
   if (!list) return;
   list.innerHTML = '';
-  [['te', 'Telugu', 'Google Telugu voice — clear and natural'], ['hi', 'Hindi', 'Kokoro voice'], ['en', 'English', 'Kokoro voice']].forEach(([code, name, desc]) => {
+  [['te', 'Telugu', 'Google Telugu voice — clear and natural'], ['hi', 'Hindi', 'Google Hindi voice — clear and natural'], ['en', 'English', 'Kokoro voice']].forEach(([code, name, desc]) => {
     const status = langDlStatus(code);
     const row = el('div', 'lang-row');
     const info = el('div', 'lang-info');
@@ -1557,9 +1691,40 @@ function paraElements() {
    "Two-page spread" setting. */
 function perView() { return (settings.twoPage !== false && window.innerWidth >= 760) ? 2 : 1; }
 function pageStep() { return perView(); }
+/* v3.3 (item 6 — a REAL book page): the page must hold a real book page's
+   aspect ratio (~1:1.5 width:height, like a 5.5x8.5in paperback, kept
+   1:1.45–1:1.6) and sit centred in the flip-wrap with desk showing around
+   it. The old CSS stretched the page to the full wrap height at a capped
+   width, so the ratio drifted with the viewport (1:1.28 on a 360px phone,
+   ~1:1.04 on a laptop) — a stretched container, not a book page. Sizing is
+   computed from the wrap rect here (paginate calls this before measuring),
+   so the ratio is exact and measurable. */
+const PAGE_RATIO = 1.5; // height = width * 1.5 (paperback 5.5x8.5in)
 function applyPageLayout() {
   const wrap = $('#flipWrap');
-  if (wrap) wrap.classList.toggle('two-page', perView() === 2);
+  if (!wrap) return;
+  const two = perView() === 2;
+  wrap.classList.toggle('two-page', two);
+  const wrapW = wrap.clientWidth, wrapH = wrap.clientHeight;
+  if (wrapW < 100 || wrapH < 100) return; // hidden (home screen) — CSS defaults stand until the reader shows
+  const gap = 24; // spine gap between the two pages
+  const availH = wrapH - 24;
+  const availW = two ? (wrapW - 24 - gap) / 2 : wrapW - 24;
+  const w = Math.max(120, Math.min(availW, availH / PAGE_RATIO, 680));
+  const h = w * PAGE_RATIO;
+  const top = Math.max(0, (wrapH - h) / 2);
+  const left0 = two ? (wrapW - (2 * w + gap)) / 2 : (wrapW - w) / 2;
+  const cur = $('#pageCurrent'), nxt = $('#pageNext');
+  if (cur) {
+    cur.style.width = w + 'px'; cur.style.height = h + 'px';
+    cur.style.top = top + 'px'; cur.style.left = left0 + 'px';
+    cur.style.right = 'auto'; cur.style.transform = 'none';
+  }
+  if (nxt) {
+    nxt.style.width = w + 'px'; nxt.style.height = h + 'px';
+    nxt.style.top = top + 'px'; nxt.style.left = (left0 + w + gap) + 'px';
+    nxt.style.right = 'auto'; nxt.style.transform = 'none';
+  }
 }
 /* v3.2 — a node's FULL height on the page, margins included. offsetHeight
    alone excludes margins, and every paragraph carries a 1em bottom margin:
@@ -1723,6 +1888,11 @@ function fillPageContent(contentEl, pageIdx) {
 function paintPages(idx) {
   const pv = perView();
   const content = $('#pageContent'), content2 = $('#pageContent2');
+  // v3.3 (item 6): the book's language on the page, so hyphenation
+  // (hyphens: auto) breaks words correctly for Telugu/Hindi/English.
+  const lang = state.meta ? langCode(state.meta.language) : 'en';
+  if (content) content.lang = lang;
+  if (content2) content2.lang = lang;
   state.currentPage = idx;
   fillPageContent(content, idx);
   if (pv === 2) fillPageContent(content2, idx + 1);
@@ -1737,6 +1907,18 @@ function paintPages(idx) {
 function showPage(idx, instant, manual) {
   const content = $('#pageContent');
   if (!state.pages.length) { content.style.display = ''; state.currentPage = 0; updatePageFooter(); return; }
+  // v3.3 (F34): a MANUAL turn past the chapter edge opens the next /
+  // previous chapter instead of clamping to the edge. (Narration and
+  // pagination call showPage with in-range indices, so they are unaffected.)
+  if (manual) {
+    if (idx > state.pages.length - 1) {
+      const nxt = nextNarratableChapter(state.currentChapter + 1);
+      if (nxt != null) { loadChapter(nxt).then(() => showPage(0, true)); return; }
+    } else if (idx < 0) {
+      const prv = prevNarratableChapter(state.currentChapter - 1);
+      if (prv != null) { loadChapter(prv).then(() => showPage(state.totalPages - 1, true)); return; }
+    }
+  }
   const pv = perView();
   idx = clamp(idx, 0, state.pages.length - 1);
   if (pv === 2) idx = Math.floor(idx / 2) * 2; // a spread always starts on an even page
@@ -2104,6 +2286,13 @@ async function speakCurrent() {
     return;
   }
   NEURAL.consecFail = 0; // a sentence that actually played breaks the failure chain
+  // v3.3 (F33): a sentence that actually played proves its voice is
+  // downloaded — mark it, so the voice survives a reload and a different
+  // book in the same language never re-downloads it (one-time loading).
+  markLanguageDownloaded(lang);
+  // v3.3 (F36): audio is playing, so any earlier voice error is stale — clear
+  // it, or it would keep replacing the sentence counter in the audio bar.
+  if (NEURAL.status) setNeuralStatus('');
   const pause = pauseAfterSentence();
   clearSentenceSpans();
   state.sentenceIndex++;
@@ -2181,6 +2370,15 @@ function nextNarratableChapter(from) {
   }
   return null;
 }
+// v3.3 (F34): the previous narratable chapter, for manual turns past the
+// start of a chapter (mirrors nextNarratableChapter, skipping toc/front).
+function prevNarratableChapter(from) {
+  for (let i = from; i >= 0; i--) {
+    if (state.chapters[i].kind === 'toc' || state.chapters[i].kind === 'front') continue;
+    return i;
+  }
+  return null;
+}
 function markChapterComplete(i) {
   state.completedChapters[i] = true;
   try { localStorage.setItem('epubreader.done.' + state.meta.id, JSON.stringify(state.completedChapters)); } catch (e) {}
@@ -2227,7 +2425,10 @@ function updateAudioBar() {
   updateHeader();
   const info = $('#abInfo');
   if (!info || !state.meta) return;
-  if (NEURAL.status) { info.textContent = NEURAL.status; return; }
+  // v3.3 (F36): a voice error is shown ONLY for a book in that error's
+  // language. A stale Kokoro error must never replace the sentence counter
+  // of a Telugu/Hindi (Google) book.
+  if (NEURAL.status && (!NEURAL.statusLang || NEURAL.statusLang === langCode(state.meta.language))) { info.textContent = NEURAL.status; return; }
   const ch = state.chapters[state.currentChapter];
   const total = state.sentences.length || 1;
   const pct = Math.round((state.sentenceIndex / total) * 100);
@@ -2355,7 +2556,7 @@ function downloadText(text, name) {
 
 /* ---------------- mini dictionary (built-in, offline) ---------------- */
 const MINI_DICT = {
-  the: 'used to point to a specific person or thing', a: 'one; any', an: 'one; any', and: 'joining word', of: 'belonging to', to: 'towards', in: 'inside', is: 'exists; equals', it: 'that thing', you: 'the person spoken to', that: 'the one over there', he: 'a man or boy', she: 'a woman or girl', was: 'past of is', for: 'meant for', on: 'on top of', are: 'plural of is', with: 'together with', his: 'belonging to him', they: 'more than one person', i: 'myself', at: 'in a place', be: 'to exist', this: 'the one here', have: 'to own', from: 'starting at', or: 'either one', one: 'a single thing', had: 'past of have', by: 'near; through', word: 'a unit of language', but: 'however', not: 'no', what: 'which thing', all: 'everything', were: 'past of are', we: 'you and I', when: 'at what time', your: 'belonging to you', can: 'to be able to', said: 'spoke', there: 'in that place', use: 'to make use of', an: 'one', each: 'every one', which: 'what one', she: 'a woman', do: 'to perform', how: 'in what way', their: 'belonging to them', if: 'on condition that', will: 'going to', up: 'towards the top', other: 'different', about: 'concerning', out: 'outside', many: 'a large number', then: 'after that', them: 'those people', these: 'the ones here', so: 'therefore', some: 'a few', her: 'belonging to her', would: 'past of will', make: 'to create', like: 'similar to; to enjoy', him: 'that man', into: 'inside', time: 'the passing of hours', has: 'owns', look: 'to see', two: 'the number 2', more: 'a greater amount', write: 'to put words on paper', go: 'to move', see: 'to notice with the eyes', number: 'a count', no: 'not any', way: 'a path; a manner', could: 'was able to', people: 'human beings', my: 'belonging to me', than: 'compared with', first: 'before all others', water: 'the liquid we drink', been: 'past of be', call: 'to shout; to name', who: 'which person', oil: 'a slippery liquid', its: 'belonging to it', now: 'at this moment', find: 'to discover', long: 'not short', down: 'towards the ground', day: '24 hours', did: 'past of do', get: 'to obtain', come: 'to arrive', made: 'past of make', may: 'possibly', part: 'a piece of something', love: 'a deep feeling of care', life: 'being alive', night: 'the dark part of the day', story: 'a tale of events', book: 'a set of written pages', read: 'to look at words and understand them', listen: 'to hear with attention', voice: 'the sound a person makes when speaking', chapter: 'a part of a book', page: 'one side of a sheet in a book', friend: 'a person you like and trust', home: 'the place where you live', heart: 'the organ that pumps blood; the centre of feelings', light: 'brightness; not heavy', dark: 'without light', world: 'the earth and everything on it', hand: 'the part at the end of your arm', eye: 'the organ you see with', mind: 'the part of you that thinks', dream: 'images in sleep; a hope', truth: 'what is real and true', secret: 'something hidden', fear: 'being afraid', hope: 'wanting something to happen', smile: 'a happy face expression', tear: 'a drop from the eye when sad', memory: 'something remembered', voice: 'sound of speaking', message: 'words sent to someone', phone: 'a device for calling and messaging', midnight: '12 o’clock at night', sister: 'a female sibling', brother: 'a male sibling', mother: 'a female parent', father: 'a male parent', village: 'a small place where people live', river: 'a large stream of water', rain: 'water falling from the sky', fire: 'burning flames', wind: 'moving air', sky: 'the space above the earth', star: 'a bright point of light at night', moon: 'the bright object in the night sky', sun: 'the star that gives us daylight', road: 'a way for vehicles and people', door: 'an entrance', window: 'an opening to see outside', room: 'a part of a house', house: 'a building where people live', school: 'a place for learning', teacher: 'a person who teaches', student: 'a person who learns', question: 'something asked', answer: 'a reply', work: 'a job; effort', money: 'coins and notes used to buy things', morning: 'the early part of the day', evening: 'the late part of the day', today: 'this day', tomorrow: 'the next day', yesterday: 'the day before today'
+  the: 'used to point to a specific person or thing', a: 'one; any', an: 'one; any', and: 'joining word', of: 'belonging to', to: 'towards', in: 'inside', is: 'exists; equals', it: 'that thing', you: 'the person spoken to', that: 'the one over there', he: 'a man or boy', she: 'a woman or girl', was: 'past of is', for: 'meant for', on: 'on top of', are: 'plural of is', with: 'together with', his: 'belonging to him', they: 'more than one person', i: 'myself', at: 'in a place', be: 'to exist', this: 'the one here', have: 'to own', from: 'starting at', or: 'either one', one: 'a single thing', had: 'past of have', by: 'near; through', word: 'a unit of language', but: 'however', not: 'no', what: 'which thing', all: 'everything', were: 'past of are', we: 'you and I', when: 'at what time', your: 'belonging to you', can: 'to be able to', said: 'spoke', there: 'in that place', use: 'to make use of', each: 'every one', which: 'what one', do: 'to perform', how: 'in what way', their: 'belonging to them', if: 'on condition that', will: 'going to', up: 'towards the top', other: 'different', about: 'concerning', out: 'outside', many: 'a large number', then: 'after that', them: 'those people', these: 'the ones here', so: 'therefore', some: 'a few', her: 'belonging to her', would: 'past of will', make: 'to create', like: 'similar to; to enjoy', him: 'that man', into: 'inside', time: 'the passing of hours', has: 'owns', look: 'to see', two: 'the number 2', more: 'a greater amount', write: 'to put words on paper', go: 'to move', see: 'to notice with the eyes', number: 'a count', no: 'not any', way: 'a path; a manner', could: 'was able to', people: 'human beings', my: 'belonging to me', than: 'compared with', first: 'before all others', water: 'the liquid we drink', been: 'past of be', call: 'to shout; to name', who: 'which person', oil: 'a slippery liquid', its: 'belonging to it', now: 'at this moment', find: 'to discover', long: 'not short', down: 'towards the ground', day: '24 hours', did: 'past of do', get: 'to obtain', come: 'to arrive', made: 'past of make', may: 'possibly', part: 'a piece of something', love: 'a deep feeling of care', life: 'being alive', night: 'the dark part of the day', story: 'a tale of events', book: 'a set of written pages', read: 'to look at words and understand them', listen: 'to hear with attention', voice: 'the sound a person makes when speaking', chapter: 'a part of a book', page: 'one side of a sheet in a book', friend: 'a person you like and trust', home: 'the place where you live', heart: 'the organ that pumps blood; the centre of feelings', light: 'brightness; not heavy', dark: 'without light', world: 'the earth and everything on it', hand: 'the part at the end of your arm', eye: 'the organ you see with', mind: 'the part of you that thinks', dream: 'images in sleep; a hope', truth: 'what is real and true', secret: 'something hidden', fear: 'being afraid', hope: 'wanting something to happen', smile: 'a happy face expression', tear: 'a drop from the eye when sad', memory: 'something remembered', message: 'words sent to someone', phone: 'a device for calling and messaging', midnight: '12 o’clock at night', sister: 'a female sibling', brother: 'a male sibling', mother: 'a female parent', father: 'a male parent', village: 'a small place where people live', river: 'a large stream of water', rain: 'water falling from the sky', fire: 'burning flames', wind: 'moving air', sky: 'the space above the earth', star: 'a bright point of light at night', moon: 'the bright object in the night sky', sun: 'the star that gives us daylight', road: 'a way for vehicles and people', door: 'an entrance', window: 'an opening to see outside', room: 'a part of a house', house: 'a building where people live', school: 'a place for learning', teacher: 'a person who teaches', student: 'a person who learns', question: 'something asked', answer: 'a reply', work: 'a job; effort', money: 'coins and notes used to buy things', morning: 'the early part of the day', evening: 'the late part of the day', today: 'this day', tomorrow: 'the next day', yesterday: 'the day before today'
 };
 function defineWord(word) {
   const w = (word || '').toLowerCase().replace(/[^a-z\u0c00-\u0c7f\u0900-\u097f]/g, '');
@@ -2384,8 +2585,10 @@ function applyFont() {
   const fsp = $('#fontSizePct'); if (fsp) fsp.textContent = [80, 90, 100, 115, 130][clamp(settings.fontSize - 1, 0, 4)] + '%';
   const lsp = $('#lineSpacingPct'); if (lsp) lsp.textContent = [100, 120, 140][clamp(settings.lineSpacing - 1, 0, 2)] + '%';
   const al = $('#setAlign'); if (al) al.value = settings.align || 'default';
-  // text alignment: default (inherit) / left / justify
-  const alignVal = settings.align === 'justify' ? 'justify' : settings.align === 'left' ? 'left' : '';
+  // v3.3 (item 6): text is JUSTIFIED by default — a real book page aligns
+  // both edges, with hyphenation. 'left' is the only opt-out; 'default'
+  // and 'justify' both mean justified book typesetting.
+  const alignVal = settings.align === 'left' ? 'left' : 'justify';
   ['#pageContent', '#pageContent2'].forEach(sel => { const pc = $(sel); if (pc) pc.style.textAlign = alignVal; });
 }
 /* v3.1: reading brightness + night light (Lighting tab). The brightness
@@ -2708,11 +2911,32 @@ async function renderStoragePanel() {
   const p = $('#storagePanel');
   const est = await (navigator.storage && navigator.storage.estimate ? navigator.storage.estimate() : Promise.resolve({})).catch(() => ({}));
   const books = await idbAll('books').catch(() => []);
+  // v3.3 (F35): count books from BOTH stores (IndexedDB + the Cache API
+  // fallback) as a union by id — the old code counted IndexedDB only, so a
+  // book held only in the cache showed as "No books cached yet" while its
+  // library card insisted the file was stored.
+  const cacheBooks = [];
+  try {
+    if (window.caches) {
+      const cache = await caches.open(BOOK_CACHE);
+      const keys = await cache.keys();
+      for (const k of keys) {
+        const id = decodeURIComponent(new URL(k.url).pathname.split('/').pop() || '');
+        if (id && !books.some(b => b.id === id)) {
+          let bm = null;
+          try { bm = JSON.parse(localStorage.getItem('epubreader.bookmeta.' + id) || 'null'); } catch (e) {}
+          const buf = await bookCacheGet(id).catch(() => null);
+          cacheBooks.push({ id, title: (bm && bm.title) || id, data: buf ? { byteLength: buf.byteLength } : null, viaCache: true });
+        }
+      }
+    }
+  } catch (e) {}
+  const all = books.concat(cacheBooks);
   let html = '<h3>Storage</h3>';
   html += '<p>Used: ' + ((est.usage || 0) / 1048576).toFixed(1) + ' MB of ' + ((est.quota || 0) / 1073741824).toFixed(1) + ' GB available.</p>';
-  if (!books.length) html += '<p>No books cached yet.</p>';
-  books.forEach(b => {
-    html += '<div class="row"><span>' + esc(b.title || b.id) + ' — ' + ((b.data ? b.data.byteLength : 0) / 1048576).toFixed(1) + ' MB</span><button class="mini-btn" data-del="' + esc(b.id) + '">Delete</button></div>';
+  if (!all.length) html += '<p>No books cached yet.</p>';
+  all.forEach(b => {
+    html += '<div class="row"><span>' + esc(b.title || b.id) + ' — ' + ((b.data ? b.data.byteLength : 0) / 1048576).toFixed(1) + ' MB' + (b.viaCache ? ' (offline cache)' : '') + '</span><button class="mini-btn" data-del="' + esc(b.id) + '">Delete</button></div>';
   });
   p.innerHTML = html;
   p.classList.remove('hidden');
@@ -2720,6 +2944,10 @@ async function renderStoragePanel() {
     btn.onclick = async () => {
       const id = btn.dataset.del;
       await idbDelete('books', id).catch(() => {});
+      // v3.3 (F35): a book may live in the Cache API fallback too — delete
+      // that copy as well, or "Delete" leaves the file behind.
+      try { if (window.caches) { const c = await caches.open(BOOK_CACHE); await c.delete(new Request(bookCacheKey(id))); } } catch (e) {}
+      try { localStorage.removeItem('epubreader.bookmeta.' + id); } catch (e) {}
       const chs = await idbAll('chapters').catch(() => []);
       for (const c of chs.filter(c => c.key.indexOf(id + '::') === 0)) await idbDelete('chapters', c.key).catch(() => {});
       await idbClearAudioForBook(id).catch(() => {});
@@ -2872,6 +3100,14 @@ function wire() {
     // the input-field early return below.
     if (ev.key === 'Escape') { closeDrawer(); $('#settingsSheet').classList.add('hidden'); const rm = $('#readerMenu'); if (rm) rm.classList.add('hidden'); return; }
     if ($('#reader').classList.contains('hidden')) return;
+    // v3.3 (F34): when the page slider has focus, ArrowRight/ArrowLeft must
+    // turn by a full spread. The slider's native 1-page step stays inside
+    // the same spread in two-page mode (floor alignment), so it looked dead.
+    if (ev.target && ev.target.id === 'pageSlider' && (ev.key === 'ArrowRight' || ev.key === 'ArrowLeft')) {
+      ev.preventDefault();
+      showPage(state.currentPage + (ev.key === 'ArrowRight' ? pageStep() : -pageStep()), false, true);
+      return;
+    }
     if (ev.target.tagName === 'INPUT' || ev.target.tagName === 'SELECT' || ev.target.tagName === 'TEXTAREA') return;
     if (ev.code === 'Space') { ev.preventDefault(); playNarration(); }
     // v3.2: in every mode the arrow keys turn PAGES (the page is the unit —
@@ -2892,8 +3128,20 @@ function wire() {
   let drag = null; // {dir, leaf, startX, panelW, target, origin, startAngle, swapped, progress}
   const fw = $('#flipWrap');
   fw.addEventListener('pointerdown', ev => {
+    // v3.3 (F34): a press on a button (the on-page ‹ › turn buttons live
+    // inside #flipWrap) must NOT start a drag or capture the pointer. The
+    // old code captured every pointerdown, which retargeted the pointerup
+    // to the wrap — the click then fired on the wrap instead of the button,
+    // so the ‹ › buttons were dead for real mouse/touch input.
+    if (ev.target && ev.target.closest && ev.target.closest('button, a, input, select, textarea')) return;
     swipeX = ev.clientX; swipeY = ev.clientY; swipeT0 = ev.timeStamp || 0; drag = null;
-    try { fw.setPointerCapture(ev.pointerId); } catch (e) {}
+    // v3.3 (F08): do NOT capture the pointer here. Capturing on pointerdown
+    // retargets the pointerup — and therefore the click — to #flipWrap, so
+    // a plain tap on page text never reaches the tap-to-hear handler on
+    // #pageContent/#pageContent2 (the click fires on the wrap, which is
+    // the pages' PARENT, so it never bubbles through them). The pointer is
+    // captured only once a drag actually starts (below), so taps keep
+    // their click and drags still track outside the element.
   });
   fw.addEventListener('pointermove', ev => {
     if (swipeX == null) return;
@@ -2902,14 +3150,28 @@ function wire() {
       if (settings.direction !== 'horizontal' || Math.abs(dx) < 14 || Math.abs(dx) < Math.abs(dy) * 1.3) return;
       const dir = dx < 0 ? 1 : -1;
       const target = state.currentPage + dir * pageStep();
-      if (!state.pages.length || target < 0 || target >= state.pages.length) { drag = { dead: true }; return; }
+      let crossChapter = null;
+      if (!state.pages.length || target < 0 || target >= state.pages.length) {
+        // v3.3 (F34): a swipe past the chapter edge turns to the next /
+        // previous chapter instead of dying. No adjacent chapter → dead.
+        crossChapter = dir > 0 ? nextNarratableChapter(state.currentChapter + 1) : prevNarratableChapter(state.currentChapter - 1);
+        if (crossChapter == null) { drag = { dead: true }; return; }
+      }
       if (settings.page3d === false) { drag = { dead: true }; return; } // 3D off: plain swipe on release
       const turning = dir > 0 ? (perView() === 2 ? $('#pageNext') : $('#pageCurrent')) : $('#pageCurrent');
       const leaf = buildTurnLeaf(turning, dir);
       if (perView() === 2 && dir < 0) leaf.classList.add('spine-right');
-      drag = { dir, leaf, startX: swipeX, panelW: Math.max(200, turning.clientWidth || 300), target, origin: state.currentPage, startAngle: dir > 0 ? 0 : -180, swapped: false, progress: 0 };
+      drag = { dir, leaf, startX: swipeX, panelW: Math.max(200, turning.clientWidth || 300), target: crossChapter != null ? null : target, origin: state.currentPage, startAngle: dir > 0 ? 0 : -180, swapped: false, progress: 0, crossChapter };
+      // v3.3 (F08): capture the pointer NOW that a drag has started, so the
+      // curl keeps tracking even if the finger/mouse leaves the element.
+      // (Capturing on pointerdown broke tap-to-hear — the tap's click was
+      // retargeted to the wrap instead of the page text.)
+      try { fw.setPointerCapture(ev.pointerId); } catch (e) {}
       leaf.style.transform = 'rotateY(' + drag.startAngle + 'deg)';
-      return;
+      // v3.3 (F34): fall through and process THIS move's progress at once.
+      // The old code returned here, so a stepped drag (one big jump, then
+      // release) created the drag but never set progress — the release saw
+      // progress 0 and sprang back. Only smooth multi-move drags worked.
     }
     if (drag.dead) return;
     const dx2 = ev.clientX - drag.startX;
@@ -2919,9 +3181,10 @@ function wire() {
     drag.leaf.style.transform = 'rotateY(' + angle.toFixed(1) + 'deg) scaleX(' + pinch.toFixed(3) + ')';
     drag.progress = progress;
     // the new page is revealed UNDER the leaf as it curls away; if the user
-    // drags back, the old page comes back under it.
-    if (progress > 0.06 && !drag.swapped) { paintPages(drag.target); drag.swapped = true; }
-    else if (progress <= 0.06 && drag.swapped) { paintPages(drag.origin); drag.swapped = false; }
+    // drags back, the old page comes back under it. (Cross-chapter drags
+    // have no in-chapter target page — the next chapter opens on release.)
+    if (drag.target != null && progress > 0.06 && !drag.swapped) { paintPages(drag.target); drag.swapped = true; }
+    else if (drag.target != null && progress <= 0.06 && drag.swapped) { paintPages(drag.origin); drag.swapped = false; }
   });
   const endDrag = ev => {
     if (swipeX == null && !drag) return;
@@ -2935,14 +3198,20 @@ function wire() {
       const complete = (drag.progress || 0) >= 0.33 || ((drag.progress || 0) >= 0.12 && vx > 0.6);
       const endAngle = drag.dir > 0 ? (complete ? -180 : 0) : (complete ? 0 : -180);
       if (complete) {
-        // a completed manual turn detaches the view from the narration —
-        // set it BEFORE painting, so paintPages re-attaches if the landed
-        // spread holds the sentence being read. The explicit re-check after
-        // is for the mid-drag paint (progress > 0.06 already painted the
-        // target before the detach was set).
-        if (state.playing) state.followNarration = false;
-        if (!drag.swapped) paintPages(drag.target);
-        if (state.playing) { const np = pageForSentence(state.sentenceIndex); if (np >= state.currentPage && np < state.currentPage + perView()) state.followNarration = true; }
+        if (drag.crossChapter != null) {
+          // v3.3 (F34): the curl finishes, then the next/previous chapter opens.
+          const chIdx = drag.crossChapter, d = drag.dir;
+          loadChapter(chIdx).then(() => showPage(d > 0 ? 0 : state.totalPages - 1, true));
+        } else {
+          // a completed manual turn detaches the view from the narration —
+          // set it BEFORE painting, so paintPages re-attaches if the landed
+          // spread holds the sentence being read. The explicit re-check after
+          // is for the mid-drag paint (progress > 0.06 already painted the
+          // target before the detach was set).
+          if (state.playing) state.followNarration = false;
+          if (!drag.swapped) paintPages(drag.target);
+          if (state.playing) { const np = pageForSentence(state.sentenceIndex); if (np >= state.currentPage && np < state.currentPage + perView()) state.followNarration = true; }
+        }
       } else if (drag.swapped) {
         paintPages(drag.origin);
       }

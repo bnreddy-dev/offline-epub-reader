@@ -2,7 +2,7 @@
    v3: Google Telugu voice (no MMS), upfront voice download with top progress
    bar, real page-curl turn, whole-word highlight (no per-letter spans — keeps
    Telugu conjunct shaping intact), no language list, instant pause, loading
-   overlay with timeout + retry, no text selection while reading. */
+   overlay with timeout + retry, no text selection while reading.
    No glassmorphism, no heavy blur, no big animations. Only cheap
    transform/opacity motion. Per-theme palettes; dark theme never uses
    black font on dark background. */
@@ -166,6 +166,9 @@ button:active { transform: scale(.97); }
      is the true page height and paginate()'s pageH is the true visible
      content height. */
   height: 100%; overflow: hidden; padding: 30px 28px 48px; background: transparent;
+  /* v3.3 (item 6): book typesetting — JUSTIFIED text (both edges aligned)
+     with hyphenation, like a printed book. Not left-aligned ragged text. */
+  text-align: justify; text-justify: inter-word; hyphens: auto;
   /* v3.2: NO vertical scrolling — the whole page fits one screen. paginate()
      splits the chapter into screenfuls; overflow goes to the NEXT page.
      overflow: hidden is the guarantee: a page that cannot scroll cannot
