@@ -99,10 +99,20 @@
       <button id="btnTheme" class="icon-btn" aria-label="Theme">◐</button>
       <button id="btnFocus" class="icon-btn" aria-label="Focus mode">⛶</button>
       <button id="btnBookmark" class="icon-btn" aria-label="Bookmark">🔖</button>
+      <!-- v3.4 (fix I): a Note button — the tap/click path to add a note on
+           the current sentence. Long-press also works, but a mouse cannot
+           long-press reliably, and text selection is disabled (user-select:
+           none) so the selection-menu Note button cannot be reached. -->
+      <button id="btnNote" class="icon-btn" aria-label="Add a note">✎</button>
       <button id="btnReaderSettings" class="icon-btn" aria-label="Settings">⚙</button>
       <!-- v3.1: 3-dot menu (Play Books reference): Remove bookmark, Read aloud, Settings, Help, Feedback -->
       <button id="btnMenu" class="icon-btn" aria-label="Menu">⋮</button>
     </header>
+
+    <!-- v3.4 (fix D): focus-mode exit — visible even when focus mode hides
+         all chrome, because the ⛶ button that turns focus on lives in the
+         hidden header. Without this there was no on-screen way out. -->
+    <button id="btnFocusExit" class="focus-exit-btn" aria-label="Exit focus mode">✕ Exit focus</button>
 
     <div id="moodStrip" class="mood-strip hidden">
       <span data-i18n="nowMood">Now:</span> <b id="moodName">Neutral</b>
@@ -187,6 +197,7 @@
       <button data-act="define" data-i18n="define">Define</button>
       <button data-act="hear" data-i18n="hear">🔊 Hear</button>
       <button data-act="highlight" data-i18n="highlight">✎ Highlight</button>
+      <button data-act="note">✎ Note</button>
       <button data-act="copy" data-i18n="copy">Copy</button>
     </div>
     <div id="definePopup" class="define-popup hidden"></div>
@@ -317,12 +328,7 @@
         </select>
       </label>
       <label class="set-row"><span data-i18n="genre">Genre</span>
-        <select id="setGenre">
-          <option value="thriller">Thriller / Mystery</option><option value="romance">Romance</option>
-          <option value="comedy">Comedy</option><option value="horror">Horror</option>
-          <option value="devotional">Devotional</option><option value="biography">Biography</option>
-          <option value="selfhelp">Self-help</option><option value="children">Children's story</option>
-        </select>
+        <span id="genreDetected" class="set-value">—</span>
       </label>
       <label class="set-row"><span data-i18n="moodFollow">Follow mood</span>
         <input id="setMoodFollow" type="checkbox" checked>
@@ -331,8 +337,8 @@
         <select id="setSleepDefault"><option value="0" data-i18n="off">Off</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">60 min</option></select>
       </label>
       <div class="set-row"><span data-i18n="sleepTimer">Sleep timer</span><button id="btnSleep" class="mini-btn">⏱ Set timer</button></div>
-      <div class="set-note" id="kokoroNote">Voices in your browser — Kokoro for English/Hindi, Google voice for Telugu. Each voice downloads when you open a book in that language, then it works offline. No device voice or install is needed.</div>
-      <div class="set-note" id="appVersion">Version 3.2.0</div>
+      <div class="set-note" id="kokoroNote">Voices in your browser — Kokoro for English, Google voice for Hindi and Telugu. Each voice downloads when you open a book in that language, then it works offline. No device voice or install is needed.</div>
+      <div class="set-note" id="appVersion">Version 3.4.0</div>
       <button id="btnExportHighlights" class="tool-btn" data-i18n="exportHighlights">Export highlights</button>
     </div>
   </div>

@@ -179,6 +179,11 @@ button:active { transform: scale(.97); }
 }
 .page-content.two-col { display: flex; gap: 28px; max-width: 980px; }
 .page-content.two-col .col { flex: 1; min-width: 0; }
+/* v3.4 (fix E): inline EPUB images must fit the book page, not overflow
+   it. A full-size figure is far wider than the page; without this the
+   picture blows out the layout. */
+.page-content img { max-width: 100%; height: auto; border-radius: 8px; display: block; margin: 0.6em auto; }
+.page-content .img-note { color: var(--muted); font-style: italic; font-size: .9em; text-align: center; }
 /* Desktop: same visible page, just roomier text margins. */
 @media (min-width: 761px) {
   .page-content { padding: 44px 52px 56px; }
@@ -233,6 +238,9 @@ body.high-contrast[data-theme="dark"] { --text: #fff; --bg: #000; }
 .set-row { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 11px 0; border-bottom: 1px solid var(--border); }
 .set-row select, .set-row input[type="range"] { max-width: 55%; }
 .set-row select { padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); }
+/* v3.4 (fix f): the genre is auto-detected from the book — shown read-only,
+   never picked. */
+.set-value { color: var(--muted); font-weight: 600; text-align: right; }
 .set-note { font-size: 13px; color: var(--muted); margin: 12px 0; line-height: 1.5; }
 .selection-menu { position: fixed; z-index: 70; display: flex; gap: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 6px; box-shadow: 0 4px 16px var(--shadow); }
 .selection-menu button { padding: 8px 10px; border-radius: 6px; font-size: 13px; }
@@ -247,6 +255,11 @@ body.high-contrast[data-theme="dark"] { --text: #fff; --bg: #000; }
 /* focus mode: hide chrome, keep text */
 body.focus-mode .reader-header, body.focus-mode .audio-bar, body.focus-mode .play-below, body.focus-mode .mood-strip, body.focus-mode .page-footer { display: none; }
 body.focus-mode .page-content { padding-top: 30px; }
+/* v3.4 (fix D): focus-mode exit button — hidden normally, visible ONLY in
+   focus mode (when the header holding the ⛶ button is hidden). Fixed at the
+   top-right so it is always reachable. */
+.focus-exit-btn { display: none; position: fixed; top: 12px; right: 12px; z-index: 120; padding: 8px 14px; border-radius: 999px; background: var(--header-bg); color: var(--text); border: 1px solid var(--border); font-size: 14px; cursor: pointer; box-shadow: 0 2px 8px var(--shadow); }
+body.focus-mode .focus-exit-btn { display: inline-flex; }
 
 /* ---------- v3: top download bar (voice preparation progress) ---------- */
 .dl-bar {

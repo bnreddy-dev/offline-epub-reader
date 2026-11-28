@@ -10,7 +10,13 @@
 /* v3.2: cache name bumped so the new worker activates cleanly and the old
    build's cached audio does not linger. */
 const CACHE = 'gtts-v3';
-const MAX_ENTRIES = 120; // Chrome counts ~7MB quota per opaque response; stay small
+// v3.4 (fix A): 120 entries barely held ONE chapter (~98 sentences), so
+// warming the current chapter + the next 2 (the app's prefetch) evicted the
+// chapter the user was reading — every library re-open re-downloaded the
+// audio from 0. A book is ~21 chapters x ~100 sentences = ~2100 entries;
+// 3000 holds a whole book plus margin. Each entry is a few KB of audio
+// (~15 MB total), well inside the browser's Cache API storage quota.
+const MAX_ENTRIES = 3000;
 const TTS_HOSTS = ['translate.google.com', 'translate.googleapis.com'];
 
 self.addEventListener('install', event => {

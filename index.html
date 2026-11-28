@@ -190,6 +190,11 @@ button:active { transform: scale(.97); }
 }
 .page-content.two-col { display: flex; gap: 28px; max-width: 980px; }
 .page-content.two-col .col { flex: 1; min-width: 0; }
+/* v3.4 (fix E): inline EPUB images must fit the book page, not overflow
+   it. A full-size figure is far wider than the page; without this the
+   picture blows out the layout. */
+.page-content img { max-width: 100%; height: auto; border-radius: 8px; display: block; margin: 0.6em auto; }
+.page-content .img-note { color: var(--muted); font-style: italic; font-size: .9em; text-align: center; }
 /* Desktop: same visible page, just roomier text margins. */
 @media (min-width: 761px) {
   .page-content { padding: 44px 52px 56px; }
@@ -244,6 +249,9 @@ body.high-contrast[data-theme="dark"] { --text: #fff; --bg: #000; }
 .set-row { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 11px 0; border-bottom: 1px solid var(--border); }
 .set-row select, .set-row input[type="range"] { max-width: 55%; }
 .set-row select { padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); }
+/* v3.4 (fix f): the genre is auto-detected from the book — shown read-only,
+   never picked. */
+.set-value { color: var(--muted); font-weight: 600; text-align: right; }
 .set-note { font-size: 13px; color: var(--muted); margin: 12px 0; line-height: 1.5; }
 .selection-menu { position: fixed; z-index: 70; display: flex; gap: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 6px; box-shadow: 0 4px 16px var(--shadow); }
 .selection-menu button { padding: 8px 10px; border-radius: 6px; font-size: 13px; }
@@ -258,6 +266,11 @@ body.high-contrast[data-theme="dark"] { --text: #fff; --bg: #000; }
 /* focus mode: hide chrome, keep text */
 body.focus-mode .reader-header, body.focus-mode .audio-bar, body.focus-mode .play-below, body.focus-mode .mood-strip, body.focus-mode .page-footer { display: none; }
 body.focus-mode .page-content { padding-top: 30px; }
+/* v3.4 (fix D): focus-mode exit button — hidden normally, visible ONLY in
+   focus mode (when the header holding the ⛶ button is hidden). Fixed at the
+   top-right so it is always reachable. */
+.focus-exit-btn { display: none; position: fixed; top: 12px; right: 12px; z-index: 120; padding: 8px 14px; border-radius: 999px; background: var(--header-bg); color: var(--text); border: 1px solid var(--border); font-size: 14px; cursor: pointer; box-shadow: 0 2px 8px var(--shadow); }
+body.focus-mode .focus-exit-btn { display: inline-flex; }
 
 /* ---------- v3: top download bar (voice preparation progress) ---------- */
 .dl-bar {
@@ -520,10 +533,20 @@ body.focus-mode .page-content { padding-top: 30px; }
       <button id="btnTheme" class="icon-btn" aria-label="Theme">◐</button>
       <button id="btnFocus" class="icon-btn" aria-label="Focus mode">⛶</button>
       <button id="btnBookmark" class="icon-btn" aria-label="Bookmark">🔖</button>
+      <!-- v3.4 (fix I): a Note button — the tap/click path to add a note on
+           the current sentence. Long-press also works, but a mouse cannot
+           long-press reliably, and text selection is disabled (user-select:
+           none) so the selection-menu Note button cannot be reached. -->
+      <button id="btnNote" class="icon-btn" aria-label="Add a note">✎</button>
       <button id="btnReaderSettings" class="icon-btn" aria-label="Settings">⚙</button>
       <!-- v3.1: 3-dot menu (Play Books reference): Remove bookmark, Read aloud, Settings, Help, Feedback -->
       <button id="btnMenu" class="icon-btn" aria-label="Menu">⋮</button>
     </header>
+
+    <!-- v3.4 (fix D): focus-mode exit — visible even when focus mode hides
+         all chrome, because the ⛶ button that turns focus on lives in the
+         hidden header. Without this there was no on-screen way out. -->
+    <button id="btnFocusExit" class="focus-exit-btn" aria-label="Exit focus mode">✕ Exit focus</button>
 
     <div id="moodStrip" class="mood-strip hidden">
       <span data-i18n="nowMood">Now:</span> <b id="moodName">Neutral</b>
@@ -608,6 +631,7 @@ body.focus-mode .page-content { padding-top: 30px; }
       <button data-act="define" data-i18n="define">Define</button>
       <button data-act="hear" data-i18n="hear">🔊 Hear</button>
       <button data-act="highlight" data-i18n="highlight">✎ Highlight</button>
+      <button data-act="note">✎ Note</button>
       <button data-act="copy" data-i18n="copy">Copy</button>
     </div>
     <div id="definePopup" class="define-popup hidden"></div>
@@ -738,12 +762,7 @@ body.focus-mode .page-content { padding-top: 30px; }
         </select>
       </label>
       <label class="set-row"><span data-i18n="genre">Genre</span>
-        <select id="setGenre">
-          <option value="thriller">Thriller / Mystery</option><option value="romance">Romance</option>
-          <option value="comedy">Comedy</option><option value="horror">Horror</option>
-          <option value="devotional">Devotional</option><option value="biography">Biography</option>
-          <option value="selfhelp">Self-help</option><option value="children">Children's story</option>
-        </select>
+        <span id="genreDetected" class="set-value">—</span>
       </label>
       <label class="set-row"><span data-i18n="moodFollow">Follow mood</span>
         <input id="setMoodFollow" type="checkbox" checked>
@@ -752,8 +771,8 @@ body.focus-mode .page-content { padding-top: 30px; }
         <select id="setSleepDefault"><option value="0" data-i18n="off">Off</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">60 min</option></select>
       </label>
       <div class="set-row"><span data-i18n="sleepTimer">Sleep timer</span><button id="btnSleep" class="mini-btn">⏱ Set timer</button></div>
-      <div class="set-note" id="kokoroNote">Voices in your browser — Kokoro for English/Hindi, Google voice for Telugu. Each voice downloads when you open a book in that language, then it works offline. No device voice or install is needed.</div>
-      <div class="set-note" id="appVersion">Version 3.2.0</div>
+      <div class="set-note" id="kokoroNote">Voices in your browser — Kokoro for English, Google voice for Hindi and Telugu. Each voice downloads when you open a book in that language, then it works offline. No device voice or install is needed.</div>
+      <div class="set-note" id="appVersion">Version 3.4.0</div>
       <button id="btnExportHighlights" class="tool-btn" data-i18n="exportHighlights">Export highlights</button>
     </div>
   </div>
@@ -879,7 +898,7 @@ window.__PDF_WORKER_SRC__ = "/**\n * @licstart The following is the entire licen
    the same number; on load the app fetches it (no-store) and, if it differs,
    shows a "New version available — Reload" banner. That is the stale-cache
    fix: a hard reload can never silently keep serving an old build. */
-const APP_VERSION = '3.3.0';
+const APP_VERSION = '3.4.0';
 
 /* ---------------- utilities ---------------- */
 const $ = s => document.querySelector(s);
@@ -920,7 +939,7 @@ const SETTINGS_KEY = 'epubreader.settings.v1';
    chapter open), defPreview (auto-show definition on selection),
    offlineDict (offline dictionary on/off), brightness (30–100),
    brightnessOn, nightLight. */
-const defaults = { theme: 'book', direction: 'horizontal', font: 'serif', fontSize: 3, lineSpacing: 2, uiLang: 'en', genre: 'thriller', moodFollow: true, sleepDefault: 0, largeText: false, highContrast: false, align: 'default', page3d: true, volumeKeys: false, autoReadAloud: false, defPreview: true, offlineDict: true, brightness: 100, brightnessOn: false, nightLight: false, twoPage: true };
+const defaults = { theme: 'book', direction: 'horizontal', font: 'serif', fontSize: 3, lineSpacing: 2, uiLang: 'en', moodFollow: true, sleepDefault: 0, largeText: false, highContrast: false, align: 'default', page3d: true, volumeKeys: false, autoReadAloud: false, defPreview: true, offlineDict: true, brightness: 100, brightnessOn: false, nightLight: false, twoPage: true };
 let settings = Object.assign({}, defaults);
 try { const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); settings = Object.assign({}, defaults, s); } catch (e) {}
 function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {} }
@@ -1096,13 +1115,17 @@ function onFlipResize() {
 
 /* ---------------- moods & genres (spec §7) ---------------- */
 const MOODS = {
-  tense:   { label: 'Tense',    speed: 0.85, pitch: -1, pause: 450, reveal: 900, color: '#8a5a2b' },
-  sad:     { label: 'Sad',      speed: 0.80, pitch: -1, pause: 600, reveal: 800, color: '#5b6b8c' },
-  warm:    { label: 'Warm',     speed: 0.95, pitch: 0,  pause: 400, reveal: 500, color: '#b3541e' },
-  light:   { label: 'Light',    speed: 1.10, pitch: 1,  pause: 250, reveal: 300, color: '#2e7d4f' },
-  scary:   { label: 'Scary',    speed: 0.75, pitch: -2, pause: 700, reveal: 1200, color: '#6b2d5b' },
-  neutral: { label: 'Neutral',  speed: 1.00, pitch: 0,  pause: 350, reveal: 400, color: '#666666' },
-  dialogue:{ label: 'Dialogue', speed: 1.05, pitch: 0,  pause: 200, reveal: 0,   color: '#666666' },
+  // v3.4 (fix g): pauses are natural speech gaps now (200–450ms), not the
+  // long dead air (450–1200ms) that made 1x feel sluggish. Each mood keeps
+  // its character (scary pauses longest, dialogue shortest) but none of
+  // them stalls the flow.
+  tense:   { label: 'Tense',    speed: 0.85, pitch: -1, pause: 300, reveal: 600, color: '#8a5a2b' },
+  sad:     { label: 'Sad',      speed: 0.80, pitch: -1, pause: 400, reveal: 600, color: '#5b6b8c' },
+  warm:    { label: 'Warm',     speed: 0.95, pitch: 0,  pause: 300, reveal: 400, color: '#b3541e' },
+  light:   { label: 'Light',    speed: 1.10, pitch: 1,  pause: 200, reveal: 250, color: '#2e7d4f' },
+  scary:   { label: 'Scary',    speed: 0.75, pitch: -2, pause: 450, reveal: 800, color: '#6b2d5b' },
+  neutral: { label: 'Neutral',  speed: 1.00, pitch: 0,  pause: 300, reveal: 350, color: '#666666' },
+  dialogue:{ label: 'Dialogue', speed: 1.05, pitch: 0,  pause: 150, reveal: 0,   color: '#666666' },
 };
 const GENRES = {
   thriller:   { mood: 'tense',  base: 0.90, label: 'Thriller / Mystery' },
@@ -1117,7 +1140,91 @@ const GENRES = {
 function moodOfChapter(ch) {
   if (!settings.moodFollow) return 'neutral';
   if (ch && ch.mood) return ch.mood;
-  return (GENRES[settings.genre] || GENRES.thriller).mood;
+  return (GENRES[currentGenre()] || GENRES.thriller).mood;
+}
+// v3.4 (fix f): GENRE AUTO-DETECTION. The narration mode is never
+// user-selected — the app detects the book's genre from the book itself
+// (title, subtitle/description, chapter titles, and a sample of the text)
+// and sets the voice + narration (mood, pace) to fit. Keywords cover
+// English and Telugu script (the books are in either); the title weighs
+// most, then the description, then the text sample. The manual Genre
+// dropdown is gone; the detected genre is shown read-only in Settings.
+const GENRE_KEYWORDS = {
+  thriller: ['murder', 'mystery', 'killer', 'detective', 'crime', 'secret', 'dead', 'death', 'midnight', 'suspense', 'investigat', 'police', 'blood', 'danger', 'hidden', 'clue', 'chase', 'escape', 'weapon', 'thriller', 'suspect', 'victim', 'రహస్య', 'హత్య', 'చావు', 'దెయ్యం', 'భయం', 'నేరం', 'పోలీసు', 'చీకటి', 'మిస్టరీ', 'సందేశ'],
+  romance: ['love', 'romance', 'romantic', 'heart', 'kiss', 'wedding', 'marriage', 'beloved', 'lover', 'passion', 'embrace', 'darling', 'sweetheart', 'soulmate', 'ప్రేమ', 'పెళ్లి', 'గుండె', 'ప్రియు'],
+  comedy: ['funny', 'laugh', 'comedy', 'humor', 'humour', 'joke', 'hilarious', 'fun', 'smile', 'witty', 'నవ్వు', 'హాస్య', 'జోక్', 'సరదా'],
+  horror: ['horror', 'demon', 'haunted', 'scary', 'scream', 'monster', 'devil', 'witch', 'curse', 'possess', 'eerie', 'nightmare', 'భూతం', 'శాపం', 'రక్తం', 'దుష్ట', 'పీడకల'],
+  devotional: ['god', 'goddess', 'temple', 'prayer', 'devotion', 'divine', 'bhakti', 'spiritual', 'mantra', 'deity', 'puja', 'sacred', 'hymn', 'భక్తి', 'దేవుడు', 'గుడి', 'పూజ', 'మంత్రం', 'దేవత', 'ఆధ్యాత్మిక'],
+  biography: ['biography', 'autobiography', 'memoir', 'life story', 'life of', 'biograph', 'జీవిత', 'ఆత్మకథ', 'చరిత్ర'],
+  selfhelp: ['self-help', 'self help', 'success', 'habit', 'motivation', 'motivational', 'goal', 'productivity', 'mindset', 'improve', 'growth', 'discipline', 'విజయం', 'అలవాటు', 'లక్ష్యం', 'ప్రేరణ'],
+  children: ['children', 'kids', 'fairy', 'bedtime', 'moral story', 'childrens', 'tale', 'పిల్లలు', 'కథ', 'జంతువు', 'నీతి'],
+};
+function scoreGenreText(text, weight, scores) {
+  const t = (text || '').toLowerCase();
+  if (!t) return;
+  for (const g in GENRE_KEYWORDS) {
+    for (const kw of GENRE_KEYWORDS[g]) {
+      let idx = t.indexOf(kw), n = 0;
+      while (idx >= 0 && n < 5) { n++; idx = t.indexOf(kw, idx + kw.length); }
+      if (n) scores[g] = (scores[g] || 0) + weight * n;
+    }
+  }
+}
+function detectGenreFromParts(title, subtitle, description, chapterTitles, sampleText) {
+  const scores = {};
+  scoreGenreText(title, 6, scores); // the title is the strongest signal
+  scoreGenreText(subtitle, 3, scores);
+  scoreGenreText(description, 3, scores);
+  scoreGenreText(chapterTitles, 2, scores);
+  scoreGenreText(sampleText, 1, scores);
+  let best = 'thriller', bestScore = 0;
+  for (const g in scores) {
+    if (scores[g] > bestScore) { best = g; bestScore = scores[g]; }
+  }
+  // no keyword hit at all — fall back to thriller (the long-standing
+  // default), so the narration still has a defined mode.
+  return best;
+}
+// The book's detected genre (per book, stored on its metadata). Falls back
+// to thriller when nothing is detected yet (or no book is open).
+function currentGenre() {
+  return (state.meta && state.meta.genre && GENRES[state.meta.genre]) ? state.meta.genre : 'thriller';
+}
+function refreshGenreDisplay() {
+  const g = $('#genreDetected');
+  if (g) g.textContent = GENRES[currentGenre()].label + ' (auto-detected)';
+}
+async function detectGenreForBook() {
+  if (!state.meta) return;
+  const meta = state.meta;
+  const chTitles = (state.chapters || []).map(c => c.title).join(' ');
+  // metadata-only guess first (instant, shown right away)
+  meta.genre = detectGenreFromParts(meta.title, meta.subtitle, meta.description, chTitles, '');
+  refreshGenreDisplay();
+  // refine with a sample of the first narratable chapter's text
+  try {
+    const first = nextNarratableChapter(0);
+    if (first != null) {
+      const rec = await loadChapterText(first).catch(() => null);
+      if (rec && state.meta === meta) {
+        const sample = rec.paras.map(p => p.text || '').join(' ').slice(0, 6000);
+        const refined = detectGenreFromParts(meta.title, meta.subtitle, meta.description, chTitles, sample);
+        if (refined !== meta.genre) {
+          meta.genre = refined;
+          refreshGenreDisplay();
+          // the mood follows the genre — re-apply it for the current chapter
+          if (state.meta === meta) {
+            setMood(moodOfChapter(state.chapters[state.currentChapter]));
+            // rebuild the current chapter's sentences with the new genre
+            // mood — but only if the user has not started listening yet, so
+            // we never lose their place mid-narration. (If they have
+            // started, the new genre applies from the next chapter on.)
+            if (!state.playing && state.sentenceIndex === 0) loadChapter(state.currentChapter);
+          }
+        }
+      }
+    }
+  } catch (e) { /* detection is best-effort; the metadata guess stands */ }
 }
 function setMood(name, announce) {
   state.mood = MOODS[name] ? name : 'neutral';
@@ -1159,7 +1266,12 @@ const NEURAL = {
 };
 const SYNTH_TIMEOUT_MS = 45000;
 const KOKORO_LOAD_TIMEOUT_MS = 300000; // v3.3 (F33): the Kokoro model is ~92 MB — a 45 s budget can never cover a first download on a slow connection. Loads get 5 min; only synthesis keeps the 45 s budget.
-const PREFETCH_AHEAD = 2;
+// v3.4 (fix g): prefetch 4 sentences ahead (was 2). On first play the
+// chapter audio is still downloading, so a 2-sentence buffer runs dry and
+// the narration stalls on on-demand downloads (bursts with long gaps).
+// Four ahead keeps the next sentences ready while the current one plays,
+// so 1x flows instead of stalling.
+const PREFETCH_AHEAD = 4;
 const MAX_CHUNK_CHARS = 180;
 const MAX_CONSEC_FAIL = 3;
 const KOKORO_MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX';
@@ -1293,7 +1405,24 @@ function kokoroWorkerStart() {
     const w = new Worker(url, { type: 'module' });
     w.onmessage = (e) => {
       const d = e.data || {};
-      if (d.type === 'progress') { setDlProgress('Downloading Kokoro voice', d.loaded || 0, d.total || 0); return; }
+      if (d.type === 'progress') {
+        // v3.4 (fix B): the worker posts {file, progress} — progress is a
+        // 0–1 float — but the page read d.loaded/d.total, which the worker
+        // never sends, so the bar was set to 0/0 and sat at 0% for the
+        // whole 92 MB download. Read d.progress instead. The big model
+        // file (model_quantized.onnx) dominates, so its progress is the
+        // bar; the tiny config/tokenizer files finish in milliseconds.
+        if (typeof d.progress === 'number') {
+          const file = String(d.file || '');
+          const pct = Math.round(Math.max(0, Math.min(1, d.progress)) * 100);
+          if (file.indexOf('model') >= 0) {
+            setDlProgress('Downloading Kokoro voice', pct, 100);
+          } else if (pct >= 100) {
+            setDlProgress('Downloading Kokoro voice', 2, 100);
+          }
+        }
+        return;
+      }
       const p = NEURAL.kokoroWorkerPending.get(d.id);
       if (!p) return;
       NEURAL.kokoroWorkerPending.delete(d.id);
@@ -1309,7 +1438,17 @@ function kokoroWorkerStart() {
     return null;
   }
 }
+// v3.4 (fix a): a LOAD failure must not permanently poison the worker.
+// kokoroWorkerFail is now only for a genuine worker crash (w.onerror).
+// A load failure just resets the worker so the next attempt starts fresh —
+// a transient network hiccup must not kill English for the session.
+function kokoroWorkerReset() {
+  NEURAL.kokoroWorkerPending.forEach(p => p.reject(new Error('Kokoro worker reset')));
+  NEURAL.kokoroWorkerPending.clear();
+  if (NEURAL.kokoroWorker) { try { NEURAL.kokoroWorker.terminate(); } catch (e) {} NEURAL.kokoroWorker = null; }
+}
 function kokoroWorkerFail(err) {
+  // Genuine worker crash (w.onerror) — the worker is dead for the session.
   NEURAL.kokoroWorkerFailed = true;
   NEURAL.kokoroWorkerReady = null;
   NEURAL.kokoroWorkerPending.forEach(p => p.reject(err || new Error('Kokoro worker failed')));
@@ -1336,10 +1475,23 @@ function kokoroWorkerCall(msg, timeoutMs) {
 async function ensureKokoroWorker() {
   if (NEURAL.kokoroWorkerReady) return NEURAL.kokoroWorkerReady;
   NEURAL.kokoroWorkerReady = (async () => {
-    await kokoroWorkerCall({ type: 'load' }, KOKORO_LOAD_TIMEOUT_MS);
-    return true;
+    // v3.4 (fix a): one retry with a fresh worker. A transient load failure
+    // (network hiccup, slow link) must not kill English for the session —
+    // the old code poisoned the worker on the first load failure and every
+    // later Play fell to the main thread, which then failed the same way.
+    let lastErr = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await kokoroWorkerCall({ type: 'load' }, KOKORO_LOAD_TIMEOUT_MS);
+        return true;
+      } catch (e) {
+        lastErr = e;
+        if (attempt === 0) { kokoroWorkerReset(); await sleep(1000); }
+      }
+    }
+    throw lastErr || new Error('Kokoro worker load failed');
   })().catch(err => {
-    kokoroWorkerFail(err);
+    kokoroWorkerReset();
     NEURAL.kokoroWorkerReady = null;
     throw err;
   });
@@ -1434,6 +1586,19 @@ function googleTtsUrl(text, lang) {
 function gtEstimateSec(text) {
   const n = String(text || '').length;
   return Math.max(0.6, n / GT_CHARS_PER_SEC);
+}
+// v3.4 (fix A): is this Google TTS audio already in the Service Worker
+// cache? The SW stores it under the exact translate_tts URL, so a cache
+// hit here means the audio is already downloaded — it must not show the
+// download bar or be re-fetched. This is the check that makes a library
+// re-open load instantly instead of replaying "Downloading … 1/98".
+async function gtAudioInSwCache(text, lang) {
+  try {
+    if (!window.caches) return false;
+    const cache = await caches.open('gtts-v3');
+    const hit = await cache.match(googleTtsUrl(text, lang));
+    return !!hit;
+  } catch (e) { return false; }
 }
 /* Pool of <audio> elements for Google playback + pre-buffering. The element
    that pre-buffered a sentence is the one that plays it, so the buffered
@@ -2010,6 +2175,9 @@ async function openEpub(arrayBuffer, fileName) {
     if (first) state.meta.language = detectScriptLang(first.paras.map(p => p.text).join(' '));
   }
   await registerBook();
+  // v3.4 (fix f): detect the book's genre from the book itself — never
+  // user-selected. Fire-and-forget; it refines itself with chapter text.
+  detectGenreForBook();
   return state.meta;
 }
 function classifyChapter(label, href) {
@@ -2048,10 +2216,53 @@ async function coverToDataUrl(url) {
     return canvas.toDataURL('image/jpeg', 0.8);
   } catch (e) { return url; }
 }
-async function resolveImageUrl(book, src) {
+// v3.4 (fix E): resolve a relative image src (as written in the XHTML)
+// against the chapter file's href to get the full archive path.
+// The XHTML says src="fig-ch1-1.jpg" but the archive entry is
+// "OEBPS/fig-ch1-1.jpg" — passing the bare src to createUrl finds nothing,
+// so every inline image fell back to "[image]". Handles . and ..
+function resolveArchivePath(baseHref, rel) {
+  if (!rel) return rel;
+  if (rel.indexOf('/') === 0) return rel.replace(/^\//, '');
+  const baseDir = baseHref ? baseHref.split('/').slice(0, -1).join('/') : '';
+  const parts = (baseDir ? baseDir + '/' + rel : rel).split('/');
+  const out = [];
+  for (const part of parts) {
+    if (part === '.' || part === '') continue;
+    if (part === '..') { out.pop(); continue; }
+    out.push(part);
+  }
+  return out.join('/');
+}
+// v3.4 (fix E): the OPF directory — chapter hrefs are relative to it
+// (e.g. href "ch01.xhtml" with the OPF at "OEBPS/content.opf" means the
+// chapter file is "OEBPS/ch01.xhtml"). Found by scanning the archive for
+// the .opf entry.
+function opfDir(book) {
   try {
-    if (!src || src.indexOf('data:') === 0 || src.indexOf('http') === 0) return src;
-    const url = await book.archive.createUrl(src);
+    const files = Object.keys((book.archive && book.archive.zip && book.archive.zip.files) || {});
+    const opf = files.find(f => f.toLowerCase().endsWith('.opf'));
+    if (!opf) return '';
+    const idx = opf.lastIndexOf('/');
+    return idx >= 0 ? opf.slice(0, idx + 1) : '';
+  } catch (e) { return ''; }
+}
+async function resolveImageUrl(book, src, baseHref) {
+  try {
+    if (!src || src.indexOf('data:') === 0 || src.indexOf('http') === 0 || src.indexOf('blob:') === 0) return src;
+    // v3.4 (fix E): the src is relative to its XHTML file — resolve it to
+    // the full archive path first, or createUrl finds nothing. Two steps:
+    // (1) the chapter href is relative to the OPF directory, so prepend it
+    // ("ch01.xhtml" -> "OEBPS/ch01.xhtml"); (2) resolve the image src
+    // against that ("fig-ch1-1.jpg" -> "OEBPS/fig-ch1-1.jpg"). And epub.js
+    // Archive.getBlob does t.substr(1) — it expects a LEADING slash
+    // ("/OEBPS/fig.jpg"); without it the first letter is stripped and the
+    // file is "not found".
+    const dir = opfDir(book);
+    let chFull = baseHref || '';
+    if (dir && chFull.indexOf(dir) !== 0) chFull = dir + chFull;
+    const full = resolveArchivePath(chFull, src);
+    const url = await book.archive.createUrl('/' + full);
     return url || src;
   } catch (e) { return src; }
 }
@@ -2059,14 +2270,24 @@ async function loadChapterText(chIdx) {
   const ch = state.chapters[chIdx];
   if (!ch) return null;
   const cached = await idbGet('chapters', state.meta.id + '::' + chIdx).catch(() => null);
-  if (cached && cached.paras) return cached;
+  if (cached && cached.paras) {
+    // v3.4 (fix E): blob URLs die on reload — re-resolve image URLs for
+    // epub books so a cached chapter shows real pictures, not stale blobs
+    // (a stale blob: URL renders as a broken image).
+    if (state.bookType === 'epub') {
+      for (const p of cached.paras) {
+        if (p.kind === 'img') p.blobUrl = await resolveImageUrl(state.book, p.src, ch.href);
+      }
+    }
+    return cached;
+  }
   let paras;
   if (state.bookType === 'epub') {
     const section = state.book.spine.get(ch.spineIndex);
     await section.load(state.book.load.bind(state.book));
     paras = extractParagraphs(section.document);
     for (const p of paras) {
-      if (p.kind === 'img') p.blobUrl = await resolveImageUrl(state.book, p.src);
+      if (p.kind === 'img') p.blobUrl = await resolveImageUrl(state.book, p.src, ch.href);
     }
     try { section.unload(); } catch (e) {}
   } else {
@@ -2140,6 +2361,9 @@ async function openPdf(arrayBuffer, fileName) {
   state.chapters = chapters;
   state.currentChapter = 0; state.sentenceIndex = 0; state.cacheCount = 0;
   await registerBook();
+  // v3.4 (fix f): detect the book's genre from the book itself — never
+  // user-selected. Fire-and-forget; it refines itself with chapter text.
+  detectGenreForBook();
   return state.meta;
 }
 
@@ -2214,10 +2438,21 @@ async function prepareVoiceForBook() {
   const myToken = ++VOICE_PREP.token;
   VOICE_PREP.lang = lang;
   VOICE_PREP.running = true;
+  // v3.4 (fix A): a new voice-prep run starts fresh — hide any bar left by
+  // a previous run. The old bar's hide timeout is token-gated, so a new run
+  // (new token) invalidates it and the old bar would stay stuck visible
+  // even though this run shows no bar (cached chapter). The new run shows
+  // the bar again itself if it actually has something to download.
+  hideDlBar();
   try {
     if (lang === 'te' || lang === 'hi') {
       // v3.3 (F32): Google voice for Telugu AND Hindi.
-      const ok = await warmChapterAudio(state.currentChapter, myToken, true);
+      // v3.4 (fix A): if the voice is already downloaded, warm the chapter
+      // QUIETLY (no bar). The old code always passed showBar=true, so every
+      // library re-open replayed "Downloading … 1/98" even though the audio
+      // was already cached. A first download still shows the bar.
+      const alreadyDl = langDlStatus(lang) === 'downloaded';
+      const ok = await warmChapterAudio(state.currentChapter, myToken, !alreadyDl);
       if (ok && myToken === VOICE_PREP.token) {
         // v3.3 (F36): audio that warmed is audio that is downloaded — mark
         // it, so the Languages panel tells the truth after a reload.
@@ -2238,11 +2473,34 @@ async function prepareVoiceForBook() {
       // already downloaded must NOT show a fresh download bar — just make
       // sure the worker is up, quietly. A downloaded voice stays downloaded
       // across reloads and across books in the same language.
-      const already = langDlStatus(lang) === 'downloaded';
+      // v3.4 (fix a): do NOT trust the "downloaded" flag — verify the model
+      // is actually in the transformers cache. A flag set by a sentence that
+      // once played does not prove the model survived a reload; if the cache
+      // is empty the voice must download again (honest bar), not fail
+      // silently on Play. This was the v3.3 English-reload failure: the flag
+      // said downloaded, the cache was empty, the quiet worker re-check
+      // failed silently, and Play then died with "Kokoro voice could not
+      // load".
+      let already = langDlStatus(lang) === 'downloaded';
+      if (already) {
+        const cached = await kokoroModelCached().catch(() => false);
+        if (!cached) {
+          already = false;
+          // the flag lied — clear it so the panel and the next check tell
+          // the truth, and the voice downloads for real this time.
+          const st0 = langDlState(); delete st0[lang]; saveLangDlState(st0);
+          renderLangList();
+        }
+      }
       if (!already) setDlProgress('Downloading ' + langDisplayName(lang) + ' voice', 0, 100);
       try {
         await withTimeout(ensureKokoroWorker(), KOKORO_LOAD_TIMEOUT_MS, 'load Kokoro voice');
         if (myToken !== VOICE_PREP.token) return;
+        // v3.4 (fix a): verify the model is actually persisted now. If the
+        // transformers cache does not hold it, pre-cache it explicitly so
+        // a reload finds it.
+        const persisted = await kokoroModelCached().catch(() => false);
+        if (!persisted) { await precacheKokoroModel().catch(() => false); }
         if (!already) {
           const st = langDlState(); st[lang] = { downloaded: true, at: Date.now() }; saveLangDlState(st);
           setDlMessage(langDisplayName(lang) + ' voice ready');
@@ -2280,17 +2538,60 @@ async function warmChapterAudio(chIdx, token, showBar) {
   const rec = await loadChapterText(chIdx).catch(() => null);
   if (!rec || token !== VOICE_PREP.token) return;
   const mood = moodOfChapter(state.chapters[chIdx]);
-  const sentences = parasToSentences(rec.paras, mood).filter(s => s.text && !s.image);
-  const total = sentences.length;
-  if (!total) return;
+  // v3.4 (fix d): the bar total must match the playback counter. The
+  // counter counts every sentence in parasToSentences — including image
+  // entries, which the narration steps past (no audio to download). The bar
+  // used to count only audio sentences (98) while the counter said 101.
+  // Images are ready at once (they are in the book file), so the bar counts
+  // them as ready from the start and the total is the same count the
+  // counter shows. The warming loop still only downloads AUDIO sentences.
+  const allSentences = parasToSentences(rec.paras, mood);
+  const sentences = allSentences.filter(s => s.text && !s.image);
+  const total = allSentences.length;
+  const imageCount = total - sentences.length;
+  if (!sentences.length) return true; // nothing to download (images only)
   const label = 'Downloading ' + langDisplayName(lang) + ' voice — Chapter ' + (chIdx + 1);
-  let ready = 0; // sentences ACTUALLY buffered — a failed fetch never counts
+  // v3.4 (fix A): check the Service Worker cache FIRST. A sentence whose
+  // audio is already cached is already downloaded — it counts as ready at
+  // once and is never re-fetched. Only sentences that actually need a
+  // network fetch are prepared (and counted). If EVERYTHING is already
+  // cached, there is nothing to download — return at once with NO bar.
+  // (The audio plays on demand from the SW cache, so the in-memory pool
+  // does not need pre-buffering for cached sentences.) This is what makes
+  // a library re-open load instantly instead of replaying
+  // "Downloading … 1/98" from 0.
+  const cachedFlags = await Promise.all(sentences.map(async (s) => {
+    const clean = sanitizeForSpeech(s.text, lang);
+    if (!hasSpeakable(clean)) return true; // unspeakable counts as ready
+    const chunks = chunkForSpeech(clean, GT_CHUNK_CHARS);
+    for (const c of chunks) {
+      if (!(await gtAudioInSwCache(c, lang))) return false;
+    }
+    return true;
+  }));
+  if (token !== VOICE_PREP.token || !state.meta) return;
+  const missing = sentences.map((_, i) => i).filter(i => !cachedFlags[i]);
+  // v3.4 (fix d): ready counts images (ready at once) + cached audio, so
+  // the bar starts at the true ready count toward the counter's total.
+  // audioReady is the old ready (audio only) — it gates the retry: a retry
+  // only helps if some AUDIO actually buffered (a slow link), not when the
+  // count is only images.
+  let ready = imageCount + (sentences.length - missing.length);
+  let audioReady = sentences.length - missing.length;
+  if (!missing.length) return true;
   // one pass over a list of sentence indices; returns the indices that failed.
   // v3.1 CIRCUIT BREAKER: if 3 sentences fail in a row the link is down
   // (offline), not slow — stop the pass at once and say so honestly instead
   // of grinding through every sentence at 0% for minutes. The rest will
   // download on demand when the user listens.
-  const runPass = async (list) => {
+  // v3.4 (fix I): a single sentence timing out used to stall the whole
+  // chapter at 99% (88/89) — the first pass never retries a timeout, and
+  // the retry pass used the same rule, so one hung sentence could never
+  // finish. The RETRY pass (retryTimeouts=true) gives a timed-out chunk
+  // one more chance after a backoff — a transient blip then completes
+  // instead of stalling the chapter. The first pass still fails fast on
+  // timeouts, so a dead link does not burn 20s per sentence.
+  const runPass = async (list, retryTimeouts) => {
     const stillFailed = [];
     let consecFail = 0;
     for (const i of list) {
@@ -2298,7 +2599,7 @@ async function warmChapterAudio(chIdx, token, showBar) {
       if (consecFail >= 3) { stillFailed.push(i); continue; }
       const s = sentences[i];
       const clean = sanitizeForSpeech(s.text, lang);
-      if (!hasSpeakable(clean)) { ready++; if (showBar) setDlProgress(label, ready, total); continue; }
+      if (!hasSpeakable(clean)) { ready++; audioReady++; if (showBar) setDlProgress(label, ready, total); continue; }
       const chunks = chunkForSpeech(clean, GT_CHUNK_CHARS);
       let ok = true;
       for (let ci = 0; ci < chunks.length; ci++) {
@@ -2311,7 +2612,9 @@ async function warmChapterAudio(chIdx, token, showBar) {
           // ~20s more per sentence and keeps the bar at 0% for minutes.
           // And a timeout must NEVER count as buffered (v3.1's truthy
           // 'timeout' string did exactly that — the bar moved on no audio).
-          if (GT_LAST_FAIL === 'timeout') { ok = false; break; }
+          // v3.4 (fix I): in the RETRY pass, a timeout gets one more chance
+          // — that is what un-sticks a chapter at 99%.
+          if (GT_LAST_FAIL === 'timeout' && !retryTimeouts) { ok = false; break; }
           await sleep(2000);
           if (token !== VOICE_PREP.token) return null;
           const got2 = await gtPrepare(key, chunks[ci], lang);
@@ -2320,26 +2623,26 @@ async function warmChapterAudio(chIdx, token, showBar) {
         // throttle so Google never 403s us
         await sleep(GT_MIN_GAP_MS);
       }
-      if (ok) { ready++; consecFail = 0; if (showBar) setDlProgress(label, ready, total); }
+      if (ok) { ready++; audioReady++; consecFail = 0; if (showBar) setDlProgress(label, ready, total); }
       else { stillFailed.push(i); consecFail++; }
       // yield to the UI thread every sentence — the page must stay responsive
       await sleep(0);
     }
     return stillFailed;
   };
-  if (showBar) setDlProgress(label, 0, total);
-  let failed = await runPass(sentences.map((_, i) => i));
+  if (showBar) setDlProgress(label, ready, total); // bar starts at the cached count, not 0
+  let failed = await runPass(missing, false);
   if (failed == null) return;
-  // v3.1: retry the failed sentences ONCE — but only if some sentences DID
-  // buffer (a slow/flaky link). If NOTHING buffered (ready === 0) the link
-  // is down, not slow; retrying would just sit at 0% longer. Say so at once.
-  if (failed.length && ready > 0 && token === VOICE_PREP.token) {
+  // v3.1: retry the failed sentences ONCE — but only if some AUDIO did
+  // buffer (a slow/flaky link). If NOTHING buffered (audioReady === 0) the
+  // link is down, not slow; retrying would just sit at 0% longer. Say so at once.
+  if (failed.length && audioReady > 0 && token === VOICE_PREP.token) {
     // one quiet background retry for the sentences that failed (slow link);
     // the bar says so honestly while it retries.
     if (showBar) setDlMessage(label + ' — ' + ready + ' of ' + total + ' ready, retrying the rest…', (ready / total) * 100);
     await sleep(5000);
     if (token !== VOICE_PREP.token) return;
-    const failed2 = await runPass(failed);
+    const failed2 = await runPass(failed, true); // retry pass: timeouts get one more chance (fix I)
     if (failed2 == null) return;
     failed = failed2;
   }
@@ -2378,6 +2681,42 @@ function langDlStatus(code) {
   if (NEURAL.kokoro) return 'downloaded';
   return (s[code] && s[code].downloaded) ? 'downloaded' : 'not';
 }
+// v3.4 (fix c/G): the flag alone is NOT proof the voice is usable — a
+// reload or a cache clear can empty the real cache while the flag still
+// says "downloaded". The panel must verify against the actual cache.
+// English: the model file must be in the transformers Cache API cache
+// (or the worker is loaded in memory right now). Telugu/Hindi: at least
+// one audio entry for that language must be in the Google TTS
+// service-worker cache (the URL carries tl=te / tl=hi). If the real cache
+// is empty, the stale flag is cleared and the panel shows Not downloaded.
+async function googleVoiceCached(lang) {
+  try {
+    if (!window.caches) return false;
+    const names = await caches.keys();
+    for (const n of names) {
+      if (n.indexOf('gtts') !== 0) continue;
+      const c = await caches.open(n);
+      const keys = await c.keys();
+      for (const req of keys) {
+        if (req.url.indexOf('tl=' + lang) >= 0) return true;
+      }
+    }
+    return false;
+  } catch (e) { return false; }
+}
+async function verifyLangStatus(code) {
+  const flag = langDlStatus(code) === 'downloaded';
+  let real = false;
+  if (code === 'en') {
+    real = !!NEURAL.kokoro || (await kokoroModelCached().catch(() => false));
+  } else {
+    real = await googleVoiceCached(code).catch(() => false);
+  }
+  if (flag && !real) {
+    const s = langDlState(); delete s[code]; saveLangDlState(s);
+  }
+  return real ? 'downloaded' : 'not';
+}
 // v3.3 (F33): kokoro-js loads voice files from the Cache API cache named
 // 'kokoro-voices', keyed by the full HuggingFace URL. Pre-cache the voice
 // file there so it persists across reloads and the first synth never needs
@@ -2395,6 +2734,59 @@ async function precacheKokoroVoice(voiceId) {
     await cache.put(url, res.clone());
     return true;
   } catch (e) { console.warn('Kokoro voice pre-cache failed:', e); return false; }
+}
+// v3.4 (fix a — Kokoro after reload): the localStorage "downloaded" flag is
+// NOT proof the model survived a reload — it only proves a sentence once
+// played. The proof is the model file in the transformers Cache API cache.
+// A flag that says "downloaded" while the cache is empty is a lie: it makes
+// prepareVoiceForBook skip the download, and Play then fails after reload.
+// These are the exact model files kokoro-js/transformers.js loads for the
+// q8 Kokoro model (verified against the Hugging Face file list 2026-11-28:
+// onnx/model_quantized.onnx is 92,361,116 bytes; the voice file is
+// voices/af_bella.bin, 522,240 bytes). The cache key transformers.js uses
+// is the full resolve URL, so the check below uses the same URL.
+const KOKORO_MODEL_BASE = 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/';
+const KOKORO_MODEL_FILES = ['config.json', 'tokenizer.json', 'tokenizer_config.json', 'onnx/model_quantized.onnx'];
+const KOKORO_MODEL_MAIN = KOKORO_MODEL_BASE + 'onnx/model_quantized.onnx';
+// True only if the Kokoro model file is actually in the transformers Cache
+// API cache, so a reload can load it without the network.
+async function kokoroModelCached() {
+  try {
+    if (!window.caches) return false;
+    const cache = await caches.open('transformers-cache');
+    const hit = await cache.match(KOKORO_MODEL_MAIN);
+    return !!hit;
+  } catch (e) { return false; }
+}
+// True only if the Kokoro voice file is in the kokoro-voices cache.
+async function kokoroVoiceCached(voice) {
+  try {
+    if (!window.caches) return false;
+    const cache = await caches.open('kokoro-voices');
+    const hit = await cache.match(KOKORO_VOICE_URL(voice || 'af_bella'));
+    return !!hit;
+  } catch (e) { return false; }
+}
+// v3.4 (fix a): guarantee the model survives a reload. transformers.js
+// caches the model in 'transformers-cache' when it downloads it, but if
+// that cache is empty (cleared, evicted, or the load took another path) the
+// model must be put there explicitly — otherwise a reload re-downloads
+// 92 MB or fails outright. Only fetches files that are not already cached.
+// (Hugging Face serves these with CORS headers — transformers.js reads the
+// same URLs with fetch — so a page fetch works here too.)
+async function precacheKokoroModel() {
+  try {
+    if (!window.caches) return false;
+    const cache = await caches.open('transformers-cache');
+    for (const f of KOKORO_MODEL_FILES) {
+      const url = KOKORO_MODEL_BASE + f;
+      if (await cache.match(url)) continue;
+      const res = await fetch(url);
+      if (!res || !res.ok) return false;
+      await cache.put(url, res.clone());
+    }
+    return true;
+  } catch (e) { console.warn('Kokoro model pre-cache failed:', e); return false; }
 }
 async function downloadLanguage(code) {
   const s = langDlState();
@@ -2421,6 +2813,10 @@ async function downloadLanguage(code) {
   try {
     await withTimeout(ensureKokoroWorker(), KOKORO_LOAD_TIMEOUT_MS, 'load Kokoro voice');
     await precacheKokoroVoice(neuralVoiceFor(code));
+    // v3.4 (fix a): verify the model is actually persisted in the
+    // transformers cache; if it is not, pre-cache it explicitly so a reload
+    // finds it. Only then is "downloaded" true.
+    if (!(await kokoroModelCached().catch(() => false))) { await precacheKokoroModel().catch(() => false); }
     const st = langDlState(); st[code] = { downloaded: true, at: Date.now() }; saveLangDlState(st);
     setDlMessage(langDisplayName(code) + ' voice downloaded');
     setTimeout(hideDlBar, 1200);
@@ -2459,22 +2855,37 @@ async function removeLanguage(code) {
   }
   renderLangList();
 }
-function renderLangList() {
+// v3.4 (fix c/G): the panel shows the REAL status — verified against the
+// cache, not the flag. The flag can lie (a reload/eviction can empty the
+// cache while the flag still says "downloaded"), so each row is checked
+// against the actual cache before it is shown as Downloaded.
+async function renderLangList() {
   const list = $('#langList');
   if (!list) return;
   list.innerHTML = '';
-  [['te', 'Telugu', 'Google Telugu voice — clear and natural'], ['hi', 'Hindi', 'Google Hindi voice — clear and natural'], ['en', 'English', 'Kokoro voice']].forEach(([code, name, desc]) => {
-    const status = langDlStatus(code);
+  const langs = [['te', 'Telugu', 'Google Telugu voice — clear and natural'], ['hi', 'Hindi', 'Google Hindi voice — clear and natural'], ['en', 'English', 'Kokoro voice']];
+  // Show "Checking…" while the real cache is verified, then the true status.
+  const rows = langs.map(([code, name, desc]) => {
     const row = el('div', 'lang-row');
     const info = el('div', 'lang-info');
     info.appendChild(el('div', 'lang-name', name));
     info.appendChild(el('div', 'lang-desc', desc));
-    info.appendChild(el('div', 'lang-status', status === 'downloaded' ? '✓ Downloaded for offline' : 'Not downloaded'));
+    const st = el('div', 'lang-status', 'Checking…');
+    info.appendChild(st);
     row.appendChild(info);
-    const btn = el('button', 'mini-btn', status === 'downloaded' ? 'Remove' : '⬇ Download');
-    btn.onclick = () => { if (status === 'downloaded') removeLanguage(code); else downloadLanguage(code); };
+    const btn = el('button', 'mini-btn', '…');
+    btn.disabled = true;
     row.appendChild(btn);
     list.appendChild(row);
+    return { code, st, btn };
+  });
+  const statuses = await Promise.all(langs.map(([code]) => verifyLangStatus(code).catch(() => 'not')));
+  rows.forEach(({ code, st, btn }, i) => {
+    const status = statuses[i];
+    st.textContent = status === 'downloaded' ? '✓ Downloaded for offline' : 'Not downloaded';
+    btn.disabled = false;
+    btn.textContent = status === 'downloaded' ? 'Remove' : '⬇ Download';
+    btn.onclick = () => { if (status === 'downloaded') removeLanguage(code); else downloadLanguage(code); };
   });
 }
 
@@ -2744,6 +3155,32 @@ function paintPages(idx) {
   fillPageContent(content, idx);
   if (pv === 2) fillPageContent(content2, idx + 1);
   else content2.innerHTML = '';
+  // v3.4 (fix e-b): a chapter with a single content page has no facing
+  // page — showing the right panel empty looks like a blank page
+  // ("Page 1 of 1"). Hide the right panel and centre the one page instead.
+  // The single page keeps its spread-page size; only its position changes.
+  const singleContent = pv === 2 && state.pages.length === 1;
+  const nxt = $('#pageNext'), cur = $('#pageCurrent');
+  if (nxt) nxt.style.display = singleContent ? 'none' : '';
+  if (cur) {
+    if (singleContent) {
+      const wrap = $('#flipWrap');
+      const w = cur.offsetWidth || 0;
+      cur.style.left = Math.max(0, (wrap.clientWidth - w) / 2) + 'px';
+      cur.dataset.singleCentered = '1';
+    } else if (cur.dataset.singleCentered) {
+      // back to a multi-page chapter — let the layout own the position again.
+      delete cur.dataset.singleCentered;
+      applyPageLayout();
+    }
+  }
+  // v3.4 (fix e-a): force the new spread to lay out NOW, before the browser
+  // paints the next frame. Without this the new panels can paint empty in
+  // the frame where the turn leaf lifts, flashing a mostly-blank left page
+  // before the content repaints. Reading offsetHeight forces a synchronous
+  // reflow of both panels so the new content is laid out first.
+  if (content) void content.offsetHeight;
+  if (content2) void content2.offsetHeight;
   updatePageFooter();
   if (state.playing) {
     const np = pageForSentence(state.sentenceIndex);
@@ -2824,9 +3261,24 @@ function updatePageFooter() {
   // v3.2: every mode is paginated now — the current page is always the
   // painted page number, never a scroll fraction.
   const cur = state.currentPage + 1;
-  $('#pageNum').textContent = 'Page ' + cur + ' of ' + total;
+  // v3.4 (fix C): in two-page mode the spread shows TWO pages, so the
+  // footer shows the range (e.g. "Pages 5–6 of 6"). The old "Page 5 of 6"
+  // hid the right page, so jumping to an even page (Go to page 6) looked
+  // like nothing happened — the spread already showed it, but the footer
+  // never said so.
+  if (perView() === 2 && cur + 1 <= total) {
+    $('#pageNum').textContent = 'Pages ' + cur + '–' + (cur + 1) + ' of ' + total;
+  } else {
+    $('#pageNum').textContent = 'Page ' + cur + ' of ' + total;
+  }
   const ch = state.chapters[state.currentChapter];
   $('#chapterPos').textContent = ch ? ('Chapter ' + (state.currentChapter + 1) + ' of ' + state.chapters.length) : '';
+  // v3.4 (fix H): keep the Contents drawer's "currently on page" marker in
+  // sync on EVERY page turn. It used to be set only when the chapter list
+  // was rebuilt (on chapter load), so it went stale as pages turned
+  // ("page 1" while on page 3).
+  const chCurrent = document.querySelector('#chapterList li.active .ch-current');
+  if (chCurrent) chCurrent.textContent = 'currently on page ' + cur;
   // v3.1 (Play Books footer): pages left in this chapter, % through the book,
   // and the bottom page slider.
   const chPages = (state.pages && state.pages.length) || 1;
@@ -3026,8 +3478,17 @@ function currentMoodRule() {
   return MOODS[moodName] || MOODS.neutral;
 }
 function effectiveRate() {
-  const genreBase = (GENRES[settings.genre] || GENRES.thriller).base;
-  return clamp(state.speed * currentMoodRule().speed * genreBase, 0.4, 2.5);
+  const genre = GENRES[currentGenre()] || GENRES.thriller;
+  const moodRule = currentMoodRule();
+  // v3.4 (fix g): the genre base and the mood speed used to MULTIPLY, so a
+  // thriller (base 0.90) in its own tense mood (0.85) played at 0.765x —
+  // that is why 1x felt like 0.5x-0.7x, slow and robotic. The genre base IS
+  // the pace for the book; the mood only varies it RELATIVE to the genre's
+  // own mood, so the genre's own mood plays at exactly the genre base
+  // (thriller tense = 0.90, not 0.765). Other moods vary around it.
+  const genreMoodSpeed = (MOODS[genre.mood] || MOODS.neutral).speed;
+  const moodFactor = moodRule.speed / genreMoodSpeed;
+  return clamp(state.speed * genre.base * moodFactor, 0.4, 2.5);
 }
 function pauseAfterSentence() {
   const s = state.sentences[state.sentenceIndex];
@@ -3094,7 +3555,12 @@ async function speakCurrent() {
     return;
   }
   const playDur = res.duration || 0;
-  if (playDur > 0.3) state.avgSentenceSec = state.avgSentenceSec * 0.7 + playDur * 0.3;
+  // v3.4 (fix I): clamp the sample — a download gap can make one sentence
+  // "take" 25s, and feeding that into the running average inflated
+  // avgSentenceSec, so the time-left estimate JUMPED UP when the page
+  // turned. A spoken sentence is rarely over 15s; longer means a gap,
+  // not speech.
+  if (playDur > 0.3) { const d = Math.min(playDur, 15); state.avgSentenceSec = state.avgSentenceSec * 0.7 + d * 0.3; }
   updateAudioBar();
   state.speaking = true;
   let ok = false;
@@ -3236,8 +3702,15 @@ function skipSeconds(sec) {
   const dir = sec < 0 ? -1 : 1;
   state.sentenceIndex = clamp(state.sentenceIndex + dir * n, 0, Math.max(0, state.sentences.length - 1));
   clearSentenceSpans();
-  if (state.playing) { state.followNarration = true; stopNeural(); state.speaking = false; clearTimeout(pauseTimer); buildSentenceSpans(); scrollToSentence(); speakCurrent(); }
+  // v3.4 (fix I): the skip must work while PAUSED too. It used to look
+  // inert because the view did not follow (followNarration was false, so
+  // scrollToSentence returned at once) and the counter never refreshed.
+  // Jumping while paused moves the view to the new sentence and refreshes
+  // the counter — but does NOT start audio.
+  state.followNarration = true;
+  if (state.playing) { stopNeural(); state.speaking = false; clearTimeout(pauseTimer); buildSentenceSpans(); scrollToSentence(); speakCurrent(); }
   else { buildSentenceSpans(); scrollToSentence(); }
+  updateAudioBar();
   savePosition();
 }
 function nextSentence() {
@@ -3281,7 +3754,18 @@ function updateAudioBar() {
   const pct = Math.round((state.sentenceIndex / total) * 100);
   $('#abProgressFill').style.width = pct + '%';
   const remaining = Math.max(0, Math.round(((total - state.sentenceIndex) * state.avgSentenceSec) / 5) * 5);
-  info.textContent = (ch ? ch.title : '') + ' · ' + state.sentenceIndex + '/' + total + ' · ' + fmtTime(remaining) + ' left in chapter';
+  // v3.4 (fix I): the time-left must never RISE while moving forward in
+  // the same chapter. A slow sentence can still nudge the average up, so
+  // the displayed value is clamped to never exceed what was last shown
+  // for this chapter (moving backward resets it — more content is left).
+  let shown = remaining;
+  if (state._tlChapter === state.currentChapter && state._tlLast != null && state.sentenceIndex >= (state._tlLastIdx || 0)) {
+    shown = Math.min(remaining, state._tlLast);
+  }
+  state._tlChapter = state.currentChapter;
+  state._tlLast = shown;
+  state._tlLastIdx = state.sentenceIndex;
+  info.textContent = (ch ? ch.title : '') + ' · ' + state.sentenceIndex + '/' + total + ' · ' + fmtTime(shown) + ' left in chapter';
 }
 function timeRemainingBook() {
   let secs = 0;
@@ -3686,6 +4170,14 @@ $('#selectionMenu') && $('#selectionMenu').addEventListener('click', ev => {
     const note = prompt('Add a note (optional):', '') || '';
     addHighlight(selText, note);
   }
+  // v3.4 (fix I): a Note action on the selection menu — the tap/click path
+  // to create a note. Long-press (touch & hold) also works, but a mouse
+  // cannot long-press, so without this there was no way to add a note
+  // with a tap/click at all.
+  if (act === 'note') {
+    const note = prompt('Add a note:', '') || '';
+    if (note.trim()) addNote(note);
+  }
   if (act === 'define') {
     const def = defineWord(selText);
     popup.innerHTML = '<h4>' + esc(selText) + '</h4>' +
@@ -3804,15 +4296,25 @@ async function renderStoragePanel() {
     };
   });
 }
+// v3.4 (fix F): the true engine per language — Kokoro is English-only
+// (kokoro-js 1.2.1 has no Hindi voice); Hindi and Telugu are Google
+// voices. Every panel that names an engine must use this, so the three
+// places (Languages, Voices, Settings) can never disagree again.
+function voiceEngineLabel(lang) {
+  const c = langCode(lang);
+  if (c === 'te') return 'Google Telugu voice — clear and natural';
+  if (c === 'hi') return 'Google Hindi voice — clear and natural';
+  return 'Kokoro — af_bella (natural, expressive)';
+}
 function updateVoicePanel() {
   const p = $('#voicePanel');
   if (!p) return;
   const status = NEURAL.status ? '<p class="voice-status">' + esc(NEURAL.status) + '</p>' : '';
   const cur = state.meta ? langDisplayName(langCode(state.meta.language)) : null;
   p.innerHTML = '<h3>Voices in this browser</h3>' +
-    (cur ? '<p><b>This book (' + esc(cur) + '):</b> ' + (langCode(state.meta.language) === 'te' ? 'Google Telugu voice — clear and natural' : 'Kokoro — ' + esc(neuralVoiceFor(state.meta.language))) + '</p>' : '') +
+    (cur ? '<p><b>This book (' + esc(cur) + '):</b> ' + esc(voiceEngineLabel(state.meta.language)) + '</p>' : '') +
     '<p><b>English:</b> Kokoro — af_bella (natural, expressive)</p>' +
-    '<p><b>Hindi:</b> Kokoro — hf_alpha</p>' +
+    '<p><b>Hindi:</b> Google Hindi voice — clear and natural</p>' +
     '<p><b>Telugu:</b> Google Telugu voice — clear and natural. No device voice or install is needed.</p>' +
     '<p>Each voice downloads when you open a book in that language, then works offline. Nothing is installed on your device.</p>' +
     status;
@@ -3862,12 +4364,28 @@ function wire() {
   $('#btnBack15').onclick = () => skipSeconds(-15);
   $('#btnFwd15').onclick = () => skipSeconds(15);
   $('#btnBookmark').onclick = () => addBookmark(false);
+  // v3.4 (fix I): toolbar Note button — the tap/click path to add a note
+  // on the current sentence (same prompt as long-press).
+  $('#btnNote').onclick = () => {
+    const s = state.sentences[state.sentenceIndex];
+    const cur = s ? s.text : '';
+    const note = window.prompt('Add a note about this passage:\n\n“' + cur.slice(0, 120) + '”');
+    if (note) addNote(note);
+  };
   $('#btnSleep').onclick = () => $('#sleepMenu').classList.toggle('hidden');
   $('#btnChapters').onclick = () => { const d = $('#drawer'); d.classList.contains('open') ? closeDrawer() : openDrawer(); };
   $('#btnDrawerClose').onclick = closeDrawer;
-  $('#drawerScrim').onclick = closeDrawer;
+  // v3.4 (fix H): the drawer used to close when the scrim (the dim area
+  // over the page) was tapped — so any tap on the page while the drawer
+  // was open closed it, and it looked like it "auto-closed" after 30–60 s.
+  // It now stays open until the user closes it explicitly (✕, the Chapters
+  // button, Escape, or picking a chapter/bookmark). The scrim only dims.
+  $('#drawerScrim').onclick = null;
   $('#btnTheme').onclick = cycleTheme;
   $('#btnFocus').onclick = () => document.body.classList.toggle('focus-mode');
+  // v3.4 (fix D): the exit button is the way OUT of focus mode — the ⛶
+  // button is in the hidden header, so without this there was no exit.
+  $('#btnFocusExit').onclick = () => document.body.classList.remove('focus-mode');
   $('#btnReaderSettings').onclick = () => $('#settingsSheet').classList.remove('hidden');
   $('#btnHomeSettings').onclick = () => $('#settingsSheet').classList.remove('hidden');
   $('#btnSettingsClose').onclick = () => $('#settingsSheet').classList.add('hidden');
@@ -3902,6 +4420,9 @@ function wire() {
     const page = clamp(n, 1, total);
     showPage(page - 1, false, true);
     updatePageFooter();
+    // v3.4 (fix C): show the page the user jumped to — on a phone the
+    // drawer covers the page, so leaving it open hides the result.
+    closeDrawer();
   };
   let footerRaf = null;
   $('#pageContent').addEventListener('scroll', () => {
@@ -3936,7 +4457,8 @@ function wire() {
   $('#setAutoReadAloud').addEventListener('change', ev => { settings.autoReadAloud = ev.target.checked; saveSettings(); });
   $('#setDefPreview').addEventListener('change', ev => { settings.defPreview = ev.target.checked; saveSettings(); });
   $('#setOfflineDict').addEventListener('change', ev => { settings.offlineDict = ev.target.checked; saveSettings(); });
-  $('#setGenre').addEventListener('change', ev => { settings.genre = ev.target.value; saveSettings(); if (state.meta) { const m = moodOfChapter(state.chapters[state.currentChapter]); setMood(m); } });
+  // v3.4 (fix f): no manual Genre dropdown any more — the genre is
+  // auto-detected from the book and shown read-only in Settings.
   $('#setMoodFollow').addEventListener('change', ev => { settings.moodFollow = ev.target.checked; saveSettings(); setMood(state.mood); });
   $('#setSleepDefault').addEventListener('change', ev => { settings.sleepDefault = parseInt(ev.target.value, 10) || 0; saveSettings(); });
   $('#setLargeText').addEventListener('change', ev => { settings.largeText = ev.target.checked; saveSettings(); applyFont(); });
@@ -3945,7 +4467,13 @@ function wire() {
     // v3.2 (F25): Escape closes the Contents drawer (and any open sheet/menu)
     // — including from inside the drawer's search box, so this runs before
     // the input-field early return below.
-    if (ev.key === 'Escape') { closeDrawer(); $('#settingsSheet').classList.add('hidden'); const rm = $('#readerMenu'); if (rm) rm.classList.add('hidden'); return; }
+    // v3.4 (fix D): Escape also exits focus mode — it was a trap: the ⛶
+    // button is hidden in focus mode and Escape did nothing, so there was
+    // no way out short of navigating away.
+    if (ev.key === 'Escape') {
+      if (document.body.classList.contains('focus-mode')) { document.body.classList.remove('focus-mode'); return; }
+      closeDrawer(); $('#settingsSheet').classList.add('hidden'); const rm = $('#readerMenu'); if (rm) rm.classList.add('hidden'); return;
+    }
     if ($('#reader').classList.contains('hidden')) return;
     // v3.3 (F34): when the page slider has focus, ArrowRight/ArrowLeft must
     // turn by a full spread. The slider's native 1-page step stays inside
@@ -4208,6 +4736,9 @@ function showUpdateBanner() {
 
 /* ---------------- init ---------------- */
 function init() {
+  // v3.4 (fix D): focus mode must never persist across a reload — a fresh
+  // load always starts with the chrome visible.
+  document.body.classList.remove('focus-mode');
   // v3.1 (defect 5): a loading state IS visible on app start — the v3 test
   // saw "no loading progress indicator on any load". Show the overlay with
   // progress while the library renders, then hide it.
@@ -4219,7 +4750,8 @@ function init() {
   applyFont();
   applyLighting(); // v3.1: brightness / night light overlays
   const sd = $('#setDirection'); if (sd) sd.value = settings.direction;
-  const sg = $('#setGenre'); if (sg) sg.value = settings.genre;
+  // v3.4 (fix f): the genre is auto-detected — show it read-only.
+  refreshGenreDisplay();
   const ss = $('#setSleepDefault'); if (ss) ss.value = String(settings.sleepDefault || 0);
   const sm = $('#setMoodFollow'); if (sm) sm.checked = !!settings.moodFollow;
   const sl = $('#setLargeText'); if (sl) sl.checked = !!settings.largeText;
