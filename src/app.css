@@ -29,7 +29,7 @@
   --highlight: #fff3a3; --speak: #ffe98a; --word: #155e9e;
   --header-bg: #ffffff; --shadow: rgba(0,0,0,.10);
   --paper-shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 28px rgba(0,0,0,.10);
-  --desk: #d2d2cf; /* v3.2: the "desk" around the page */
+  --desk: #ffffff; /* v3.6.5: the "desk" around the page — was #d2d2cf (light grey RGB 210,210,207), which is exactly the grey the v3.6.4 live test measured in the reader after reload. v3.6.4 fixed only --bg (home); the reader desk is var(--desk), not var(--bg). "White" must read white in the reader too, not only on home */
 }
 /* Theme: dark — warm charcoal, warm light text (never black font on dark bg) */
 [data-theme="dark"] {

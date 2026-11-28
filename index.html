@@ -62,7 +62,7 @@
   --highlight: #fff3a3; --speak: #ffe98a; --word: #155e9e;
   --header-bg: #ffffff; --shadow: rgba(0,0,0,.10);
   --paper-shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 28px rgba(0,0,0,.10);
-  --desk: #d2d2cf; /* v3.2: the "desk" around the page */
+  --desk: #ffffff; /* v3.6.5: the "desk" around the page — was #d2d2cf (light grey RGB 210,210,207), which is exactly the grey the v3.6.4 live test measured in the reader after reload. v3.6.4 fixed only --bg (home); the reader desk is var(--desk), not var(--bg). "White" must read white in the reader too, not only on home */
 }
 /* Theme: dark — warm charcoal, warm light text (never black font on dark bg) */
 [data-theme="dark"] {
@@ -816,7 +816,7 @@ body.focus-mode .focus-exit-btn { display: inline-flex; }
       </label>
       <div class="set-row"><span data-i18n="sleepTimer">Sleep timer</span><button id="btnSleep" class="mini-btn">⏱ Set timer</button></div>
       <div class="set-note" id="kokoroNote">Voices in your browser — Kokoro for English, Google voice for Hindi and Telugu. Each voice downloads when you open a book in that language, then it works offline. No device voice or install is needed.</div>
-      <div class="set-note" id="appVersion">Version 3.6.4</div>
+      <div class="set-note" id="appVersion">Version 3.6.5</div>
       <button id="btnExportHighlights" class="tool-btn" data-i18n="exportHighlights">Export highlights</button>
     </div>
   </div>
@@ -964,7 +964,7 @@ window.__PDF_WORKER_SRC__ = "/**\n * @licstart The following is the entire licen
    the same number; on load the app fetches it (no-store) and, if it differs,
    shows a "New version available — Reload" banner. That is the stale-cache
    fix: a hard reload can never silently keep serving an old build. */
-const APP_VERSION = '3.6.4';
+const APP_VERSION = '3.6.5';
 
 /* ---------------- utilities ---------------- */
 const $ = s => document.querySelector(s);
@@ -1120,7 +1120,17 @@ const LIB_KEY = 'epubreader.library.v1';
 let library = [];
 try { library = JSON.parse(localStorage.getItem(LIB_KEY) || '[]'); } catch (e) { library = []; }
 function saveLibrary() { try { localStorage.setItem(LIB_KEY, JSON.stringify(library)); } catch (e) {} }
-function bookIdFor(title, author) { return 'b' + Math.abs([...(title + '|' + author)].reduce((a, c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0)).toString(36); }
+function bookIdFor(title, author, type) {
+  // v3.6.5 (d): the id MUST distinguish a PDF from an EPUB with the same
+  // title+author. The old hash (title+author only) gave both the same id,
+  // so uploading test-english.pdf REPLACED the test-english.epub library
+  // entry, overwrote its IndexedDB bytes, and the PDF reader even showed
+  // the EPUB's cached chapter sentences. EPUBs keep the legacy id (no
+  // type) so existing EPUB library entries and positions are untouched;
+  // PDFs pass 'pdf', so a PDF never collides with an EPUB again.
+  const key = title + '|' + author + (type ? '|' + type : '');
+  return 'b' + Math.abs([...key].reduce((a, c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0)).toString(36);
+}
 
 /* ---------------- global state ---------------- */
 const state = {
@@ -1172,9 +1182,27 @@ let suppressClick = false; // v3.2: a drag-curl release must not fire tap-to-hea
    No loop: paginate() moves text between pages, it never changes the wrap's
    own size (its content is absolutely positioned). Debounced, horizontal
    mode only — same guard as the window-resize handler. */
-let flipRO = null, flipROTimer = null;
-function onFlipResize() {
+let flipRO = null, flipROTimer = null, flipLastW = 0, flipLastH = 0;
+function onFlipResize(entries) {
   if (!state.meta || settings.direction !== 'horizontal') return;
+  // v3.6.5 (c): the download bar showing/hiding changes the wrap height by
+  // ~37px, and re-paginating on that flips the page count (5 -> 4) with no
+  // navigation at all (v3.6.4 live: "1 / 2, 50%" vs "1 / 3, 33%"). Ignore
+  // height-only changes smaller than a bar height — the pages stay as
+  // computed at the settled (bar-hidden) height, so the count never flips
+  // on a bar toggle. A real resize (orientation, window size) changes the
+  // width or the height by far more, so it still re-paginates. (While the
+  // bar is up, the bottom line or two of a page can sit under the shorter
+  // wrap — transient, and it resolves the moment the bar hides, with the
+  // count unchanged.)
+  let w = 0, h = 0;
+  if (entries && entries[0] && entries[0].contentRect) { w = entries[0].contentRect.width; h = entries[0].contentRect.height; }
+  else { const fw = document.querySelector('#flipWrap'); if (!fw) return; w = fw.clientWidth; h = fw.clientHeight; }
+  if (flipLastW && flipLastH) {
+    const dw = Math.abs(w - flipLastW), dh = Math.abs(h - flipLastH);
+    if (dw < 2 && dh < 60) return; // bar toggle (or jitter) — keep the settled pagination
+  }
+  flipLastW = w; flipLastH = h;
   clearTimeout(flipROTimer);
   flipROTimer = setTimeout(() => { if (state.meta && settings.direction === 'horizontal') paginate(); }, 120);
 }
@@ -1401,8 +1429,8 @@ function floatToWavBlob(samples, sampleRate) {
 /* One slim bar pinned to the very TOP of the screen. It shows what is
    downloading (voice / chapter audio) and its progress, so the user never
    has to hunt in Settings — and never wonders whether anything is happening. */
-const DL = { active: false, label: '', done: 0, total: 0, lastPaint: 0 };
-function setDlProgress(label, done, total) {
+const DL = { active: false, label: '', done: 0, total: 0, lastPaint: 0, pct: 0 };
+function setDlProgress(label, done, total, reset) {
   const bar = $('#dlBar'); if (!bar) return;
   // v3.6.3 (F66): a LABEL CHANGE always paints immediately — the user must
   // see the new state (e.g. "Downloading…" -> "Preparing…"). Only
@@ -1411,12 +1439,23 @@ function setDlProgress(label, done, total) {
   // bar kept showing the stale download label while the audio bar already
   // said "Preparing…" (caught by the C1 probe).
   const labelChanged = (label || '') !== DL.label;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  // v3.6.5 (monotonic bar): the bar must never move BACKWARD on the same
+  // label. The v3.6.4 live test saw 98 → 0 → gone: a precache callback
+  // (1/4 = 25%), a model reload restarting at 0, or a re-prepare all
+  // repaint the same label lower. A genuine new download passes
+  // reset=true (or hides the bar first, which resets the baseline) —
+  // anything else that goes backward is stale and is dropped. Compare PCT,
+  // not raw done: the precache reports file counts (total 4) while the
+  // worker reports 100.
+  if (reset) DL.pct = 0;
+  if (!labelChanged && DL.active && pct < DL.pct) return;
   DL.active = true; DL.label = label || ''; DL.done = done || 0; DL.total = total || 0;
   bar.classList.remove('hidden');
   const now = performance.now();
   if (!labelChanged && now - DL.lastPaint < 150 && done < total) return; // throttle DOM writes
   DL.lastPaint = now;
-  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  DL.pct = pct;
   $('#dlLabel').textContent = label + (total > 0 ? ' — ' + done + '/' + total : '');
   $('#dlFill').style.width = pct + '%';
   $('#dlPct').textContent = pct + '%';
@@ -1424,6 +1463,7 @@ function setDlProgress(label, done, total) {
 function setDlMessage(label, pct) {
   const bar = $('#dlBar'); if (!bar) return;
   DL.active = true; DL.label = label || '';
+  DL.pct = pct != null ? Math.round(clamp(pct, 0, 100)) : 100; // v3.6.5: keep the monotonic baseline consistent with the painted message
   $('#dlLabel').textContent = label;
   // pct is the HONEST progress (a failure message must not show a full bar)
   $('#dlFill').style.width = (pct != null ? clamp(pct, 0, 100) : 100) + '%';
@@ -1433,6 +1473,7 @@ function setDlMessage(label, pct) {
 function hideDlBar() {
   const bar = $('#dlBar'); if (!bar) return;
   DL.active = false;
+  DL.pct = 0; // v3.6.5: a hidden bar is a finished generation — the next download starts at 0
   bar.classList.add('hidden');
 }
 // v3.3 (F36): a voice error belongs to ONE language. setNeuralStatus takes
@@ -2558,7 +2599,7 @@ async function openPdf(arrayBuffer, fileName) {
     const text = tc.items.map(it => it.str || '').join(' ').replace(/\s+/g, ' ').trim();
     pages.push(text);
   }
-  const id = bookIdFor(title, author);
+  const id = bookIdFor(title, author, 'pdf'); // v3.6.5 (d): PDFs get their own id — never collide with an EPUB of the same title+author
   state.book = null; state.bookType = 'pdf'; state.pdfPages = pages;
   const lang = detectScriptLang(pages.slice(0, 3).join(' '));
   const chapters = [];
@@ -2707,7 +2748,7 @@ async function prepareVoiceForBook() {
           renderLangList();
         }
       }
-      if (!already) setDlProgress('Downloading ' + langDisplayName(lang) + ' voice', 0, 100);
+      if (!already) setDlProgress('Downloading ' + langDisplayName(lang) + ' voice', 0, 100, true); // v3.6.5: genuine new download — reset the monotonic baseline
       try {
         // v3.6.3 (F67): a model that is already cached loads WITHOUT a
         // download bar — the worker reloads it from cache into memory on
@@ -3048,7 +3089,7 @@ async function downloadLanguage(code) {
   if (code === 'te' || code === 'hi') {
     if (!state.meta) { toast('Open a book first — ' + langDisplayName(code) + ' downloads with the book'); return; }
     if (langCode(state.meta.language) !== code) { toast('Open a ' + langDisplayName(code) + ' book first — the voice downloads with its book'); return; }
-    setDlProgress('Downloading ' + langDisplayName(code) + ' voice', 0, 100);
+    setDlProgress('Downloading ' + langDisplayName(code) + ' voice', 0, 100, true); // v3.6.5: genuine new download — reset the monotonic baseline
     const token = ++VOICE_PREP.token;
     const ok = await warmChapterAudio(state.currentChapter, token, true).catch(() => false);
     if (ok) {
@@ -3061,7 +3102,7 @@ async function downloadLanguage(code) {
     return;
   }
   // Kokoro (English only since v3.3 — Hindi uses Google): download + cache the model once.
-  setDlProgress('Downloading ' + langDisplayName(code) + ' voice', 0, 100);
+  setDlProgress('Downloading ' + langDisplayName(code) + ' voice', 0, 100, true); // v3.6.5: genuine new download — reset the monotonic baseline
   try {
     await withTimeout(ensureKokoroWorker(), KOKORO_LOAD_TIMEOUT_MS, 'load Kokoro voice');
     await precacheKokoroVoice(neuralVoiceFor(code));
@@ -3871,7 +3912,14 @@ async function speakCurrent() {
     // so the first Play showed only a frozen counter. The preparing bar
     // always paints now; the worker progress overwrites its label with the
     // moving download % once bytes flow.
-    setDlProgress('Preparing English voice…', 0, 100);
+    // v3.6.5: never paint Preparing OVER an active DOWNLOAD — a Play press
+    // during a 98%-done model download flipped the bar to 0/100, then
+    // audio-start hid it (98 → 0 → gone, the v3.6.4 live report). A
+    // download bar owns the top bar until it finishes; the audio-bar
+    // message (setNeuralStatus above) still shows Preparing. The 'voice
+    // ready' label is not a download, so Preparing still paints in the
+    // 1200 ms window after a download completes (F75 preserved).
+    if (!(DL.active && DL.label.indexOf('Downloading') === 0)) setDlProgress('Preparing English voice…', 0, 100);
   } else if (langCode(lang) === 'hi' && !NEURAL.prefetch.get(key)) {
     // v3.6.3 (F69): Hindi has no Kokoro model to wait for, but a cold
     // chapter's first sentence still fetches Google audio — on a slow link
@@ -3880,7 +3928,9 @@ async function speakCurrent() {
     // prefetched for this sentence (a buffered / in-flight sentence needs
     // no message). Cleared when the clip is ready (below) and on pause.
     setNeuralStatus('Preparing Hindi voice…', 'hi');
-    setDlProgress('Preparing Hindi voice…', 0, 100);
+    // v3.6.5: same as the English branch above — never paint Preparing over
+    // an active download bar (it would flip a climbing download to 0/100).
+    if (!(DL.active && DL.label.indexOf('Downloading') === 0)) setDlProgress('Preparing Hindi voice…', 0, 100);
   }
   const rate = effectiveRate();
   let res = null;
@@ -3945,6 +3995,19 @@ async function speakCurrent() {
   if (playDur > 0.3) { const d = Math.min(playDur, 15); state.avgSentenceSec = state.avgSentenceSec * 0.7 + d * 0.3; }
   updateAudioBar();
   state.speaking = true;
+  // v3.6.2 (F59): the preparing wait is over — the clip is synthesized and
+  // playback is about to start. Hide the preparing bar HERE, not after
+  // playClip: playClip awaits the clip ENDING, so the old position (after
+  // the await) left the bar at 0/100 for the whole sentence while audio
+  // was already playing (v3.6.4 live). A real download bar owned by
+  // prepareVoiceForBook hides itself; only the Preparing / 'Downloading
+  // English voice' labels are hidden here (a Telugu/Hindi chapter bar is
+  // never matched).
+  // v3.6.3 (F66): the label may have been overwritten to 'Downloading
+  // English voice' by worker progress by the time audio starts, so the
+  // 'Preparing' check alone would leave that bar stuck visible. Hide on
+  // either label.
+  if (DL.active && (DL.label.indexOf('Preparing') === 0 || DL.label.indexOf('Downloading English voice') === 0)) hideDlBar();
   let ok = false;
   try {
     ok = await playClip(res, lang, { rate, text: s.text });
@@ -3988,15 +4051,6 @@ async function speakCurrent() {
   // v3.3 (F36): audio is playing, so any earlier voice error is stale — clear
   // it, or it would keep replacing the sentence counter in the audio bar.
   if (NEURAL.status) setNeuralStatus('');
-  // v3.6.2 (F59): audio actually started — the preparing wait is over. Hide
-  // the preparing bar (only the one this fix showed; a real download bar
-  // owned by prepareVoiceForBook hides itself).
-  // v3.6.3 (F66): the label may have been overwritten to 'Downloading
-  // English voice' by worker progress by the time audio starts, so the
-  // 'Preparing' check alone would leave that bar stuck visible. Hide on
-  // either label; a Telugu/Hindi chapter bar ('Downloading Telugu voice')
-  // is never matched.
-  if (DL.active && (DL.label.indexOf('Preparing') === 0 || DL.label.indexOf('Downloading English voice') === 0)) hideDlBar();
   const pause = pauseAfterSentence();
   clearSentenceSpans();
   state.sentenceIndex++;
@@ -4046,6 +4100,11 @@ function pauseNarration() {
   // — the wait is over (the user stopped it). Other voice statuses
   // (download / error) are left alone.
   if (NEURAL.status && NEURAL.status.indexOf('Preparing') === 0) setNeuralStatus('');
+  // v3.6.5: same for the TOP bar — a paused reader must not leave the
+  // "Preparing…" bar behind (it lingered on the home page after pause +
+  // Back, v3.6.4 live). Only the Preparing bar; a real download bar
+  // belongs to the download and hides itself on completion.
+  if (DL.active && DL.label.indexOf('Preparing') === 0) hideDlBar();
   $('#btnPlay').textContent = '▶';
   $('#btnPlayBelow').textContent = '▶ Read aloud';
   savePosition();
@@ -4061,6 +4120,12 @@ function stopNarration(resetBtn) {
   // narration (book finished, repeated failures) must not leave the
   // "Preparing…" message in the audio bar.
   if (NEURAL.status && NEURAL.status.indexOf('Preparing') === 0) setNeuralStatus('');
+  // v3.6.5: same for the TOP bar — a paused/stopped narration must not
+  // leave the "Preparing…" bar behind to linger on the home page after
+  // Back (v3.6.4 live). Only the Preparing bar: a real download bar
+  // belongs to the download, which continues in the background and hides
+  // itself on completion.
+  if (DL.active && DL.label.indexOf('Preparing') === 0) hideDlBar();
   clearSentenceSpans();
   if (resetBtn !== false) { $('#btnPlay').textContent = '▶'; $('#btnPlayBelow').textContent = '▶ Read aloud'; }
   savePosition();
@@ -4381,7 +4446,15 @@ function closeDrawer(reason) {
   $('#drawer').classList.remove('open'); $('#drawerScrim').classList.add('hidden');
   if (reason) { try { console.warn('[drawer] closed:', reason, 'v' + APP_VERSION); (window.__drawerCloses = window.__drawerCloses || []).push({ reason: reason, at: Date.now(), v: APP_VERSION }); } catch {} }
 }
-function openDrawer() { $('#drawer').classList.add('open'); $('#drawerScrim').classList.remove('hidden'); }
+function openDrawer() {
+  $('#drawer').classList.add('open'); $('#drawerScrim').classList.remove('hidden');
+  // v3.6.5 (F85): instrumentation parity with closeDrawer — the "opens by
+  // itself" half of the live report had NO instrumentation at all, so a
+  // future live repro could not name its opener. The stack names the
+  // caller (a stack through the #btnChapters handler = an accidental
+  // toggle tap; anything else = a real caller). Behaviour unchanged.
+  try { console.warn('[drawer] opened:', 'v' + APP_VERSION, new Error().stack.split('\n').slice(1, 4).join(' | ')); (window.__drawerOpens = window.__drawerOpens || []).push({ at: Date.now(), v: APP_VERSION, stack: new Error().stack }); } catch {}
+}
 // v3.6.3 (F70): focus mode changes the layout height, so the chapter is
 // repaginated — and paginate() preserves the page INDEX only, so a repack
 // can move the viewed page (the taller focus layout packs more text per
@@ -4514,6 +4587,14 @@ async function reopenBook(id) {
       await loadChapter(pos.chapter || 0);
       state.pendingSentence = pos.sentence || 0;
       state.sentenceIndex = clamp(pos.sentence || 0, 0, Math.max(0, state.sentences.length - 1));
+      // v3.6.5 (A-RELOAD): loadChapter() above resets sentenceIndex to 0
+      // and its trailing savePosition() CLOBBERS the stored pos to 0 — the
+      // in-memory index is restored correctly, so in-session Continue looks
+      // right, but the STORED pos is 0, so a full reload loses the place
+      // (v3.6.4 live: PDF 2/13 -> 0/13 after reload; the EPUB only survived
+      // because beforeunload happened to re-save the in-memory index).
+      // Re-save now, so the stored position IS the restored one.
+      savePosition();
       buildSentenceSpans(); scrollToSentence();
     } else {
       await loadChapter(nextNarratableChapter(0) || 0);
@@ -5044,7 +5125,7 @@ function wire() {
   // v3.1: Text/Lighting tab controls (replaces the old setTheme/setFont/
   // setFontSize/setLineSpacing selects, which no longer exist).
   $('#setDirection').addEventListener('change', ev => setDirection(ev.target.value));
-  $$('#themeSwatches .swatch').forEach(b => b.addEventListener('click', () => { settings.theme = b.dataset.theme; saveSettings(); savePerBookSettings(); applyTheme(); }));
+  $$('#themeSwatches .swatch').forEach(b => b.addEventListener('click', () => { settings.theme = b.dataset.theme; saveSettings(); savePerBookSettings(); applyTheme(); toast('Theme: ' + settings.theme); })); // v3.6.5: the swatch path never toasted (only cycleTheme did), so a theme picked in Settings showed no "Theme: white" confirmation — the v3.6.4 live test never observed the toast.
   $$('#fontPick .font-opt').forEach(b => b.addEventListener('click', () => { settings.font = b.dataset.font; saveSettings(); savePerBookSettings(); applyFont(); if (state.meta) paginate(); }));
   $('#btnFontMinus').onclick = () => { settings.fontSize = clamp(settings.fontSize - 1, 1, 5); saveSettings(); applyFont(); if (state.meta) paginate(); };
   $('#btnFontPlus').onclick = () => { settings.fontSize = clamp(settings.fontSize + 1, 1, 5); saveSettings(); applyFont(); if (state.meta) paginate(); };
@@ -5271,7 +5352,21 @@ function wire() {
     showPage(page - 1, true, true);
   });
   // New-version banner reload.
-  $('#btnUpdateReload').onclick = () => location.reload();
+  // v3.6.5 (U): a plain reload inside the CDN's max-age window re-serves
+  // the stale build (the edge answers plain URLs from cache for ~10 min
+  // after a deploy) — the banner would just reappear after reloading.
+  // Reload once with a one-time cache-buster so the new build actually
+  // arrives; init strips the parameter on load, so the shared link stays
+  // the plain one (clean-link rule). reg.update() first so the new worker
+  // installs too. (For the 3.6.4→3.6.5 transition itself the button that
+  // runs is the OLD page's plain reload, so this fix takes effect from
+  // the 3.6.5→3.6.6 transition onward — see FAILURE_LOG F81.)
+  $('#btnUpdateReload').onclick = () => {
+    try { navigator.serviceWorker.getRegistration().then(r => { try { r && r.update(); } catch (e) {} }).catch(() => {}); } catch (e) {}
+    const u = new URL(location.href);
+    u.searchParams.set('v', String(Date.now()));
+    location.href = u.toString();
+  };
   // Long-press (touch & hold) on reading text adds a NOTE (Play Books Notes
   // empty state). A short tap still speaks the word (tap-to-hear).
   let lpTimer = null, lpFired = false;
@@ -5351,6 +5446,17 @@ function showUpdateBanner() {
 
 /* ---------------- init ---------------- */
 function init() {
+  // v3.6.5 (U): strip a one-time reload cache-buster (?v=...) from the URL
+  // so the address bar shows the plain link (clean-link rule). Only the
+  // 'v' parameter added by the update-banner reload is removed; any other
+  // query parameter is left alone.
+  try {
+    const u = new URL(location.href);
+    if (u.searchParams.has('v')) {
+      u.searchParams.delete('v');
+      history.replaceState(null, '', u.pathname + u.search + u.hash);
+    }
+  } catch (e) {}
   // v3.4 (fix D): focus mode must never persist across a reload — a fresh
   // load always starts with the chrome visible.
   document.body.classList.remove('focus-mode');
